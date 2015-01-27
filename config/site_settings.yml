@@ -25,7 +25,7 @@ required:
     default: ''
     type: email
   notification_email:
-    default: 'noreply@unconfigured.discourse.org'
+    default: 'noreply@rifflebooks.com'
     type: email
   site_contact_username:
     default: ''
