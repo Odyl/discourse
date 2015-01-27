@@ -42,14 +42,14 @@ GEM
       activerecord (>= 2.3.0)
       rake (>= 0.8.7)
     arel (5.0.1.20140414130214)
+    asset_sync (1.1.0)
+      activemodel
+      fog (>= 1.8.0)
+      unf
     barber (0.5.0)
       ember-source
       execjs
       handlebars-source (>= 1.0.0.rc.4)
-    better_errors (2.1.0)
-      coderay (>= 1.0.0)
-      erubis (>= 2.6.6)
-      rack (>= 0.9.0)
     binding_of_caller (0.7.2)
       debug_inspector (>= 0.0.1)
     builder (3.2.2)
@@ -457,8 +457,8 @@ DEPENDENCIES
   actionpack-action_caching
   active_model_serializers (~> 0.8.0)
   annotate
+  asset_sync
   barber
-  better_errors
   binding_of_caller
   certified
   email_reply_parser

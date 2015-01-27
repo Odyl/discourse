@@ -165,7 +165,7 @@ gem 'rack-protection' # security
 # in production environments by default.
 # allow everywhere for now cause we are allowing asset debugging in prd
 group :assets do
-
+  gem 'asset_sync'
   if rails_master?
     gem 'sass-rails', git: 'https://github.com/rails/sass-rails.git'
   else
@@ -204,7 +204,7 @@ group :test, :development do
 end
 
 group :development do
-  gem 'better_errors'
+  #gem 'better_errors'
   gem 'binding_of_caller'
   gem 'librarian', '>= 0.0.25', require: false
   gem 'annotate'
