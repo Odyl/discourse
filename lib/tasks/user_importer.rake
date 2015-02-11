@@ -32,7 +32,7 @@ aruna@odyl.net,Riffle,moderators
 chelsea.fought@rifflebooks.com,Chelsea,moderators
 greg.fisher@rifflebooks.com,Gregory,moderators
 eos
-    CSV.foreach(csv, col_sep: ',', headers: true) do |new_user|
+    CSV.parse(csv, col_sep: ',', headers: true) do |new_user|
 
       user = User.where(email: new_user['email']).first
       if user
