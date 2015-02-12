@@ -22,7 +22,7 @@ Discourse::Application.configure do
   # Generate digests for assets URLs
   config.assets.digest = true
 
-  config.log_level = :info
+  config.log_level = :debug
 
   # Enable locale fallbacks for I18n (makes lookups for any locale fall back to
   # the I18n.default_locale when a translation can not be found)
