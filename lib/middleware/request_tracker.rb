@@ -12,11 +12,7 @@ class Middleware::RequestTracker
     end
   end
 
-
-
   def self.log_request(data)
-
-
     status = data[:status]
     track_view = data[:track_view]
 
@@ -34,16 +30,14 @@ class Middleware::RequestTracker
 
     if status >= 500
       ApplicationRequest.increment!(:http_5xx)
+    elsif data[:is_background]
+      ApplicationRequest.increment!(:http_background)
     elsif status >= 400
       ApplicationRequest.increment!(:http_4xx)
     elsif status >= 300
       ApplicationRequest.increment!(:http_3xx)
-    else
-      if data[:is_background]
-        ApplicationRequest.increment!(:http_background)
-      elsif status >= 200 && status < 300
-        ApplicationRequest.increment!(:http_2xx)
-      end
+    elsif status >= 200 && status < 300
+      ApplicationRequest.increment!(:http_2xx)
     end
 
   end
