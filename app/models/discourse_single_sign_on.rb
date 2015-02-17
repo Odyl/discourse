@@ -148,6 +148,8 @@ class DiscourseSingleSignOn < SingleSignOn
       rescue SocketError
         # skip saving, we are not connected to the net
         Rails.logger.warn "Failed to download external avatar: #{avatar_url}, socket error - user id #{ user.id }"
+      rescue OpenURI::HTTPError
+        Rails.logger.warn "Failed to find avatar: #{avatar_url}, 404 error - user id #{ user.id }"
       ensure
         tempfile.close! if tempfile && tempfile.respond_to?(:close!)
       end
