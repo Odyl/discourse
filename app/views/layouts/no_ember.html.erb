@@ -24,7 +24,7 @@
       <div class="contents">
         <div class="row">
           <div class="title span13">
-            <a href="/"><img src="<%=SiteSetting.logo_url%>" alt="<%=SiteSetting.title%>" id="site-logo"></a>
+            <a href="<%= if Rails.env.production? ? "http://read.rifflebooks.com/" : "http://rifflestaging.herokuapp.com" %>"><img src="<%=SiteSetting.logo_url%>" alt="<%=SiteSetting.title%>" id="site-logo"></a>
           </div>
           <% unless current_user %>
               <div class='panel clearfix'>
