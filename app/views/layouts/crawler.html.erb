@@ -19,7 +19,11 @@
       <%= SiteCustomization.custom_header(session[:preview_style]) %>
     <%- end %>
     <header>
+<<<<<<< HEAD
         <a href="<%= if Rails.env.production? ? "http://read.rifflebooks.com/" : "http://rifflestaging.herokuapp.com" %>"><img src="<%=SiteSetting.logo_url%>" alt="<%=SiteSetting.title%>" id="site-logo"></a>
+=======
+        <a href="<%= Rails.env.production? ? "http://read.rifflebooks.com/" : "http://rifflestaging.herokuapp.com" %>"><img src="<%=SiteSetting.logo_url%>" alt="<%=SiteSetting.title%>" id="site-logo"></a>
+>>>>>>> master
     </header>
     <div id="main-outlet" class="container">
       <%= yield %>

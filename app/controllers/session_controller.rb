@@ -66,7 +66,8 @@ class SessionController < ApplicationController
     sso.expire_nonce!
 
     begin
-      if user = sso.lookup_or_create_user
+      if user = sso.lookup_or_create_user(request.remote_ip)
+
         if SiteSetting.must_approve_users? && !user.approved?
           render text: I18n.t("sso.account_not_approved"), status: 403
         else
@@ -92,7 +93,7 @@ class SessionController < ApplicationController
       SingleSignOn::ACCESSORS.each do |a|
         details[a] = sso.send(a)
       end
-      Discourse.handle_exception(e, details)
+      Discourse.handle_job_exception(e, details)
 
       render text: I18n.t("sso.unknown_error"), status: 500
     end
@@ -145,8 +146,7 @@ class SessionController < ApplicationController
     end
 
     if ScreenedIpAddress.block_login?(user, request.remote_ip)
-      not_allowed_from_ip_address(user)
-      return
+      return not_allowed_from_ip_address(user)
     end
 
     (user.active && user.email_confirmed?) ? login(user) : not_activated(user)

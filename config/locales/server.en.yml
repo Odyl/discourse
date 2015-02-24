@@ -118,6 +118,8 @@ en:
     not_enough_space_on_disk: "There is not enough space on disk to upload this backup."
 
   not_logged_in: "You need to be logged in to do that."
+  not_found: "The requested URL or resource could not be found."
+  invalid_access: "You are not permitted to view the requested resource."
   read_only_mode_enabled: "The site is in read only mode. Interactions are disabled."
 
   too_many_replies:
@@ -237,7 +239,7 @@ en:
     sequential_replies: |
       ### Consider replying to several posts at once
 
-      Rather than many sequential replies to a topic, please consider a single reply that includes quotes or @name references to previous posts.
+      Rather than many sequential replies to a topic, please consider a single reply that includes quotes from previous posts or @name references.
 
       You can edit your previous reply to add a quote by highlighting text and selecting the <b>quote reply</b> button that appears.
 
@@ -564,7 +566,7 @@ en:
       xaxis: "Day"
       yaxis: "Number of visits"
     signups:
-      title: "Users"
+      title: "New Users"
       xaxis: "Day"
       yaxis: "Number of new users"
     topics:
@@ -637,19 +639,19 @@ en:
     page_view_anon_reqs:
       title: "Anonymous"
       xaxis: "Day"
-      yaxis: "Anonymous Page Views"
+      yaxis: "Anonymous API Requests"
     page_view_logged_in_reqs:
       title: "Logged In"
       xaxis: "Day"
-      yaxis: "Logged In Page Views"
+      yaxis: "Logged In API Requests"
     page_view_crawler_reqs:
       title: "Web Crawlers"
       xaxis: "Day"
-      yaxis: "Web Crawler Page Views"
+      yaxis: "Web Crawler API Requests"
     page_view_total_reqs:
       title: "Total"
       xaxis: "Day"
-      yaxis: "Total Page Views"
+      yaxis: "Total API Requests"
     http_background_reqs:
       title: "Background"
       xaxis: "Day"
@@ -754,6 +756,7 @@ en:
     title: "The name of this site, as used in the title tag."
     site_description: "Describe this site in one sentence, as used in the meta description tag."
     contact_email: "Email address of key contact responsible for this site. Used for critical notifications such as unhandled flags, as well as on the /about contact form for urgent matters."
+    contact_url: "Contact URL for this site. Used on the /about contact form for urgent matters."
     queue_jobs: "DEVELOPER ONLY! WARNING! By default, queue jobs in sidekiq. If disabled, your site will be broken."
     crawl_images: "Retrieve images from remote URLs to insert the correct width and height dimensions."
     download_remote_images_to_local: "Convert remote images to local images by downloading them; this prevents broken images."
@@ -876,8 +879,8 @@ en:
     min_password_length: "Minimum password length."
     block_common_passwords: "Don't allow passwords that are in the 10,000 most common passwords."
 
-    enable_sso: "Enable single sign on via an external site (WARNING: can prevent anyone from logging in if not properly configured when enabled; also disables invites)"
-    enable_sso_provider: "Implement Discourse SSO protocol at the /session/sso_provider endpoint, requires sso_secret to be set"
+    enable_sso: "Enable single sign on via an external site (WARNING: can prevent anyone from logging in, INCLUDING YOU, if not properly configured when enabled! Also disables invites)"
+    enable_sso_provider: "Implement Discourse SSO provider protocol at the /session/sso_provider endpoint, requires sso_secret to be set"
     sso_url: "URL of single sign on endpoint"
     sso_secret: "Secret string used to cryptographically authenticate SSO information, be sure it is 10 characters or longer"
     sso_overrides_email: "Overrides local email with external site email from SSO payload (WARNING: discrepancies can occur due to normalization of local emails)"
@@ -1127,6 +1130,7 @@ en:
 
     enable_emoji: "Enable emoji"
     emoji_set: "How would you like your emoji?"
+    enforce_square_emoji: "Force a square aspect ratio to all emojis."
 
     errors:
       invalid_email: "Invalid email address."
@@ -1665,6 +1669,13 @@ en:
 
         The topic is closed. If you believe this is in error, contact a staff member.
 
+    email_reject_auto_generated:
+      subject_template: "Email issue -- Auto Generated Reply"
+      text_body_template: |
+        We're sorry, but your email message to %{destination} (titled %{former_title}) didn't work.
+
+        Your email reply was auto generated, which we don't accept. If you believe this is in error, contact a staff member.
+
     email_error_notification:
       subject_template: "Email issue -- POP authentication error"
       text_body_template: |
@@ -1945,6 +1956,7 @@ en:
   color_schemes:
     base_theme_name: "Base"
 
+  about: "About"
   guidelines: "Guidelines"
   privacy: "Privacy"
 

@@ -15,7 +15,7 @@ module Discourse
   # error_context() method in Jobs::Base to pass the job arguments and any
   # other desired context.
   # See app/jobs/base.rb for the error_context function.
-  def self.handle_exception(ex, context = {}, parent_logger = nil)
+  def self.handle_job_exception(ex, context = {}, parent_logger = nil)
     context ||= {}
     parent_logger ||= SidekiqExceptionHandler
 
@@ -24,6 +24,29 @@ module Discourse
       current_db: cm.current_db,
       current_hostname: cm.current_hostname
     }.merge(context))
+  end
+
+  def self.handle_request_exception(ex, controller, request, current_user)
+    cm = RailsMultisite::ConnectionManagement
+    context = {
+      current_db: cm.current_db,
+      current_hostname: cm.current_hostname,
+      rails_action: controller.action_name,
+      rails_controller: controller.controller_name,
+    }
+
+    env = request.env.dup
+
+    context.each do |key, value|
+      Logster.add_to_env(env, key, value)
+    end
+
+    begin
+      Thread.current[Logster::Logger::LOGSTER_ENV] = env
+      Logster.logger.fatal("#{ex.class.to_s}: #{ex.message} in #{controller.controller_name}##{controller.action_name}")
+    ensure
+      Thread.current[Logster::Logger::LOGSTER_ENV] = nil
+    end
   end
 
   # Expected less matches than what we got in a find
@@ -289,18 +312,29 @@ module Discourse
     nil
   end
 
-  def self.start_connection_reaper(interval=30, age=30)
+  def self.start_connection_reaper
+    return if GlobalSetting.connection_reaper_age < 1 ||
+              GlobalSetting.connection_reaper_interval < 1
+
     # this helps keep connection counts in check
     Thread.new do
       while true
-        sleep interval
-        pools = []
-        ObjectSpace.each_object(ActiveRecord::ConnectionAdapters::ConnectionPool){|pool| pools << pool}
-
-        pools.each do |pool|
-          pool.drain(age.seconds)
+        begin
+          sleep GlobalSetting.connection_reaper_interval
+          reap_connections(GlobalSetting.connection_reaper_age)
+        rescue => e
+          Discourse.handle_exception(e, {message: "Error reaping connections"})
         end
       end
+    end
+  end
+
+  def self.reap_connections(age)
+    pools = []
+    ObjectSpace.each_object(ActiveRecord::ConnectionAdapters::ConnectionPool){|pool| pools << pool}
+
+    pools.each do |pool|
+      pool.drain(age.seconds)
     end
   end
 

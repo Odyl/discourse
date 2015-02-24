@@ -242,28 +242,27 @@ class PostAction < ActiveRecord::Base
       post_action_type_id: post_action_type_id
     }
 
-    action_attributes = {
+    action_attrs = {
       staff_took_action: staff_took_action,
       related_post_id: related_post_id,
       targets_topic: !!targets_topic
     }
 
     # First try to revive a trashed record
-    row_count = PostAction.where(where_attrs)
-                          .with_deleted
-                          .where("deleted_at IS NOT NULL")
-                          .update_all(action_attributes.merge(deleted_at: nil))
+    post_action = PostAction.where(where_attrs)
+                            .with_deleted
+                            .where("deleted_at IS NOT NULL")
+                            .first
 
-    if row_count == 0
-      post_action = create(where_attrs.merge(action_attributes))
+    if post_action
+      post_action.recover!
+      action_attrs.each { |attr, val| post_action.send("#{attr}=", val) }
+      post_action.save
+    else
+      post_action = create(where_attrs.merge(action_attrs))
       if post_action && post_action.errors.count == 0
         BadgeGranter.queue_badge_grant(Badge::Trigger::PostAction, post_action: post_action)
       end
-    else
-      post_action = PostAction.where(where_attrs).first
-
-      # after_commit is not called on an 'update_all' so do the notify ourselves
-      post_action.notify_subscribers
     end
 
     # agree with other flags
@@ -320,7 +319,7 @@ class PostAction < ActiveRecord::Base
 
     %w(like flag bookmark).each do |type|
       if send("is_#{type}?")
-        @rate_limiter = RateLimiter.new(user, "create_#{type}:#{Date.today}", SiteSetting.send("max_#{type}s_per_day"), 1.day.to_i)
+        @rate_limiter = RateLimiter.new(user, "create_#{type}", SiteSetting.send("max_#{type}s_per_day"), 1.day.to_i)
         return @rate_limiter
       end
     end

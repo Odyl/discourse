@@ -2,7 +2,7 @@ import ModalFunctionality from 'discourse/mixins/modal-functionality';
 import DiscourseController from 'discourse/controllers/controller';
 
 export default DiscourseController.extend(ModalFunctionality, {
-  needs: ['modal', 'createAccount', 'application'],
+  needs: ['modal', 'createAccount', 'forgotPassword', 'application'],
   authenticate: null,
   loggingIn: false,
   loggedIn: false,
@@ -15,10 +15,6 @@ export default DiscourseController.extend(ModalFunctionality, {
     this.set('loggingIn', false);
     this.set('loggedIn', false);
   },
-
-  site: function() {
-    return Discourse.Site.current();
-  }.property(),
 
   /**
    Determines whether at least one login button is enabled
@@ -122,8 +118,22 @@ export default DiscourseController.extend(ModalFunctionality, {
 
     createAccount: function() {
       var createAccountController = this.get('controllers.createAccount');
-      createAccountController.resetForm();
+      if (createAccountController) {
+        createAccountController.resetForm();
+        var loginName = this.get('loginName');
+        if (loginName && loginName.indexOf('@') > 0) {
+          createAccountController.set("accountEmail", loginName);
+        } else {
+          createAccountController.set("accountUsername", loginName);
+        }
+      }
       this.send('showCreateAccount');
+    },
+
+    forgotPassword: function() {
+      var forgotPasswordController = this.get('controllers.forgotPassword');
+      if (forgotPasswordController) { forgotPasswordController.set("accountEmailOrUsername", this.get("loginName")); }
+      this.send("showForgotPassword");
     }
   },
 
