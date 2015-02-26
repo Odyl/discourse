@@ -10,7 +10,7 @@ Discourse::Application.configure do
   config.action_controller.perform_caching = true
 
   # Disable Rails's static asset server (Apache or nginx will already do this)
-  config.serve_static_assets = GlobalSetting.serve_static_assets
+  config.serve_static_assets = true
 
   config.assets.js_compressor = :uglifier
 
@@ -18,6 +18,9 @@ Discourse::Application.configure do
 
   # stuff should be pre-compiled
   config.assets.compile = false
+
+  # For Fast.ly cache control
+  config.static_cache_control = 'public, s-maxage=2592000, maxage=86400'
 
   # Generate digests for assets URLs
   config.assets.digest = true
@@ -65,7 +68,7 @@ Discourse::Application.configure do
 
   # Discourse strongly recommend you use a CDN.
   # For origin pull cdns all you need to do is register an account and configure
-  config.action_controller.asset_host = GlobalSetting.cdn_url
+  config.action_controller.asset_host = ENV['FASTLY_CDN_URL']
 
   # a comma delimited list of emails your devs have
   # developers have god like rights and may impersonate anyone in the system
