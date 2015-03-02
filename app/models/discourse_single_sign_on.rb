@@ -53,7 +53,9 @@ class DiscourseSingleSignOn < SingleSignOn
     end
 
     # if the user isn't new or it's attached to the SSO record we might be overriding username or email
-    change_external_attributes_and_override(sso_record, user)
+    unless user.new_record?
+      change_external_attributes_and_override(sso_record, user)
+    end
 
     if sso_record && (user = sso_record.user) && !user.active
       user.active = true
