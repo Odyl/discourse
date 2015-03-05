@@ -15,18 +15,6 @@
 # http://yamllint.com/
 
 en:
-  stringex:
-    characters:
-      ellipsis: ""
-      number: "-"
-  # some default transliteration rules may be missing, add them to your locale
-  i18n:
-    transliterate:
-      rule:
-        ț: "t"
-        Ț: "t"
-        ș: "s"
-        Ș: "s"
   dates:
     short_date_no_year: "D MMM"
     short_date: "D MMM, YYYY"
@@ -292,6 +280,8 @@ en:
           attributes:
             password:
               common: "is one of the 10000 most common passwords. Please use a more secure password."
+              same_as_username: "is the same as your username. Please use a more secure password."
+              same_as_email: "is the same as your email. Please use a more secure password."
             ip_address:
               signup_not_allowed: "Signup is not allowed from this account."
         color_scheme_color:
@@ -1077,6 +1067,7 @@ en:
     allow_uploaded_avatars: "Allow users to upload custom avatars."
     allow_animated_avatars: "Allow users to use animated gif avatars. WARNING: run the avatars:refresh rake task after changing this setting."
     allow_animated_thumbnails: "Generates animated thumbnails of animated gifs."
+    default_avatars: "URLs to avatars that will be used by default for new users until they change them."
     automatically_download_gravatars: "Download Gravatars for users upon account creation or email change."
     digest_topics: "The maximum number of topics to display in the email digest."
     digest_min_excerpt_length: "Minimum post excerpt in the email digest, in characters."
@@ -1087,7 +1078,8 @@ en:
 
     detect_custom_avatars: "Whether or not to check that users have uploaded custom avatars."
     max_daily_gravatar_crawls: "Maximum number of times Discourse will check Gravatar for custom avatars in a day"
-    public_user_custom_fields: "A whitelist of custom fields for a user that can be shown publically."
+    public_user_custom_fields: "A whitelist of custom fields for a user that can be shown publicly."
+    staff_user_custom_fields: "A whitelist of custom fields for a user that can be shown to staff."
 
     allow_profile_backgrounds: "Allow users to upload profile backgrounds."
 
@@ -1140,6 +1132,7 @@ en:
       invalid_integer_max: "Value cannot be higher than %{max}."
       invalid_integer: "Value must be an integer."
       regex_mismatch: "Value doesn't match the required format."
+      must_include_latest: "Top menu must include the 'latest' tab."
       invalid_string: "Invalid value."
       invalid_string_min_max: "Must be between %{min} and %{max} characters."
       invalid_string_min: "Must be at least %{min} characters."
@@ -1237,7 +1230,8 @@ en:
     active: "Your account is activated and ready to use."
     activate_email: "<p>You're almost done! We sent an activation mail to <b>%{email}</b>. Please follow the instructions in the email to activate your account.</p><p>If it doesn't arrive, check your spam folder, or try to log in again to send another activation mail.</p>"
     not_activated: "You can't log in yet. We sent an activation email to you. Please follow the instructions in the email to activate your account."
-    not_allowed_from_ip_address: "You can't login as %{username} from that IP address."
+    not_allowed_from_ip_address: "You can't log in as %{username} from that IP address."
+    admin_not_allowed_from_ip_address: "You can't log in as admin from that IP address."
     suspended: "You can't log in until %{date}."
     suspended_with_reason: "You can't log in until %{date}. The reason you were suspended: %{reason}"
     errors: "%{errors}"
@@ -2317,3 +2311,11 @@ en:
       <p>
         <code>rainbows category:parks status:open order:latest</code> will search for topics containing the word "rainbows" in the category "parks" that are not closed or archived, ordered by date of last post.
       </p>
+
+  badges:
+    long_descriptions:
+      first_flag: |
+        Flagging is critical to the health of your community. If you notice any posts that require moderator attention please
+        do not hesitate to flag. You may also use the flagging dialog to send <b>private messages</b> to users once you reach
+        trust level 1.
+

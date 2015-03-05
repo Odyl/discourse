@@ -127,12 +127,12 @@ class TopicQuery
     create_list(:private_messages, {}, list)
   end
 
-  def list_category(category)
-    create_list(:category, unordered: true, category: category.id)
-  end
-
   def list_category_topic_ids(category)
-    default_results(unordered: true, category: category.id).pluck(:id)
+    query = default_results(category: category.id)
+    pinned_ids = query.where('pinned_at IS NOT NULL').order('pinned_at DESC').pluck(:id)
+    non_pinned_ids = query.where('pinned_at IS NULL').pluck(:id)
+
+    (pinned_ids + non_pinned_ids)[0...@options[:per_page]]
   end
 
   def list_new_in_category(category)
@@ -170,7 +170,9 @@ class TopicQuery
     if page == 0
       (pinned_topics + unpinned_topics)[0...limit] if limit
     else
-      unpinned_topics.offset((page * per_page - pinned_topics.count) - 1).to_a
+      offset = (page * per_page - pinned_topics.count) - 1
+      offset = 0 unless offset > 0
+      unpinned_topics.offset(offset).to_a
     end
 
   end
@@ -414,7 +416,16 @@ class TopicQuery
         result = result.order("CASE WHEN topics.category_id = #{topic.category_id.to_i} THEN 0 ELSE 1 END")
       end
 
-      result.order("RANDOM()")
+      # Best effort, it over selects, however if you have a high number
+      # of muted categories there is tiny chance we will not select enough
+      # in particular this can happen if current category is empty and tons
+      # of muted, big edge case
+      #
+      # we over select in case cache is stale
+      max = (count*1.3).to_i
+      ids = RandomTopicSelector.next(max) + RandomTopicSelector.next(max, topic.category)
+
+      result.where(id: ids.uniq)
     end
 
     def suggested_ordering(result, options)

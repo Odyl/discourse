@@ -10,6 +10,7 @@
 //
 
 // Stuff we need to load first
+//= require ./discourse/lib/notification-levels
 //= require ./discourse/lib/app-events
 //= require ./discourse/helpers/i18n
 //= require ./discourse/helpers/fa-icon
@@ -24,6 +25,7 @@
 //= require ./discourse/lib/autocomplete
 //= require ./discourse/lib/after-transition
 //= require ./discourse/lib/debounce
+//= require ./discourse/lib/avatar-template
 //= require_tree ./discourse/adapters
 //= require ./discourse/models/model
 //= require ./discourse/models/user_action
@@ -42,9 +44,9 @@
 //= require ./discourse/views/flag
 //= require ./discourse/views/combo-box
 //= require ./discourse/views/button
-//= require ./discourse/views/dropdown-button
-//= require ./discourse/views/notifications-button
-//= require ./discourse/views/topic-notifications-button
+//= require ./discourse/components/dropdown-button
+//= require ./discourse/components/notifications-button
+//= require ./discourse/components/topic-notifications-button
 //= require ./discourse/views/pagedown-preview
 //= require ./discourse/views/composer
 //= require ./discourse/routes/discourse_route

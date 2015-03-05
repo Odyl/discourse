@@ -1,12 +1,14 @@
 import CleansUp from 'discourse/mixins/cleans-up';
 
+import afterTransition from 'discourse/lib/after-transition';
+
 var clickOutsideEventName = "mousedown.outside-user-card",
     clickDataExpand = "click.discourse-user-card",
     clickMention = "click.discourse-user-mention";
 
 export default Discourse.View.extend(CleansUp, {
   elementId: 'user-card',
-  classNameBindings: ['controller.visible::hidden', 'controller.showBadges', 'controller.hasCardBadgeImage'],
+  classNameBindings: ['controller.visible:show', 'controller.showBadges', 'controller.hasCardBadgeImage'],
   allowBackgrounds: Discourse.computed.setting('allow_profile_backgrounds'),
 
   addBackground: function() {
@@ -26,6 +28,12 @@ export default Discourse.View.extend(CleansUp, {
 
   _setup: function() {
     var self = this;
+
+    afterTransition(self.$(), function() {
+      if (!self.get('controller.visible')) {
+        self.$().css({ left: -9999, top: -9999 });
+      }
+    });
 
     $('html').off(clickOutsideEventName).on(clickOutsideEventName, function(e) {
       if (self.get('controller.visible')) {
