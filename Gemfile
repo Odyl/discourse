@@ -261,6 +261,4 @@ group :profile do
   # gem 'rack-perftools_profiler', require: 'rack/perftools_profiler', platform: :mri_19
 end
 
-group :production do
-  gem 'rails_serve_static_assets'
-end
+gem 'rails_12factor', group: :production
