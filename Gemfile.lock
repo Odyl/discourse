@@ -317,6 +317,7 @@ GEM
       sprockets-rails (~> 2.0)
     rails-observers (0.1.2)
       activemodel (~> 4.0)
+    rails_serve_static_assets (0.0.4)
     railties (4.1.9)
       actionpack (= 4.1.9)
       activesupport (= 4.1.9)
@@ -516,6 +517,7 @@ DEPENDENCIES
   rails
   rails-observers
   rails_multisite!
+  rails_serve_static_assets
   rake
   rb-fsevent
   rb-inotify (~> 0.9)
