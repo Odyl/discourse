@@ -35,7 +35,15 @@ const PostStream = Ember.Object.extend({
   }.property('stream.@each'),
 
   loadedAllPosts: function() {
-    if (!this.get('hasLoadedData')) { return false; }
+    if (!this.get('hasLoadedData')) {
+      return false;
+    }
+
+    // if we are staging a post assume all is loaded
+    if (this.get('lastPostId') === -1) {
+      return true;
+    }
+
     return !!this.get('posts').findProperty('id', this.get('lastPostId'));
   }.property('hasLoadedData', 'posts.@each.id', 'lastPostId'),
 
@@ -287,7 +295,8 @@ const PostStream = Ember.Object.extend({
   **/
   stagePost(post, user) {
     // We can't stage two posts simultaneously
-    if (this.get('stagingPost')) { return false; }
+    if (this.get('stagingPost')) { return "alreadyStaging"; }
+
     this.set('stagingPost', true);
 
     const topic = this.get('topic');
@@ -309,27 +318,25 @@ const PostStream = Ember.Object.extend({
     if (this.get('loadedAllPosts')) {
       this.appendPost(post);
       this.get('stream').addObject(post.get('id'));
+      return "staged";
     }
 
-    return true;
+    return "offScreen";
   },
 
   // Commit the post we staged. Call this after a save succeeds.
   commitPost(post) {
-    if (this.get('loadedAllPosts')) {
-      this.appendPost(post);
+
+    if (this.get('topic.id') === post.get('topic_id')) {
+      if (this.get('loadedAllPosts')) {
+        this.appendPost(post);
+        this.get('stream').addObject(post.get('id'));
+      }
     }
-    // Correct for a dangling deleted post, if needed
-    // compensating for message bus pumping in new posts while
-    // your post is in transit
-    if(this.get('topic.highest_post_number') < post.get('post_number')){
-      this.set('topic.highest_post_number', post.get('post_number'));
-    }
+
     this.get('stream').removeObject(-1);
     this.get('postIdentityMap').set(-1, null);
-    this.get('postIdentityMap').set(post.get('id'), post);
 
-    this.get('stream').addObject(post.get('id'));
     this.set('stagingPost', false);
   },
 

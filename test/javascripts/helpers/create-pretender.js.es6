@@ -1,7 +1,7 @@
 function parsePostData(query) {
-  var result = {};
+  const result = {};
   query.split("&").forEach(function(part) {
-    var item = part.split("=");
+    const item = part.split("=");
     result[item[0]] = decodeURIComponent(item[1]);
   });
   return result;
@@ -19,16 +19,21 @@ function success() {
   return response({ success: true });
 }
 
+const _widgets = [
+  {id: 123, name: 'Trout Lure'},
+  {id: 124, name: 'Evil Repellant'}
+];
+
 export default function() {
-  var server = new Pretender(function() {
+  const server = new Pretender(function() {
 
     // Load any fixtures automatically
-    var self = this;
+    const self = this;
     Ember.keys(require._eak_seen).forEach(function(entry) {
       if (/^fixtures/.test(entry)) {
-        var fixture = require(entry, null, null, true);
+        const fixture = require(entry, null, null, true);
         if (fixture && fixture.default) {
-          var obj = fixture.default;
+          const obj = fixture.default;
           Ember.keys(obj).forEach(function(url) {
             self.get(url, function() {
               return response(obj[url]);
@@ -51,7 +56,7 @@ export default function() {
     });
 
     this.post('/session', function(request) {
-      var data = parsePostData(request.requestBody);
+      const data = parsePostData(request.requestBody);
 
       if (data.password === 'correct') {
         return response({username: 'eviltrout'});
@@ -84,6 +89,27 @@ export default function() {
 
     this.delete('/posts/:post_id', success);
     this.put('/posts/:post_id/recover', success);
+
+    this.get('/widgets/:widget_id', function(request) {
+      const w = _widgets.findBy('id', parseInt(request.params.widget_id));
+      if (w) {
+        return response({widget: w});
+      } else {
+        return response(404);
+      }
+    });
+
+    this.put('/widgets/:widget_id', function(request) {
+      const w = _widgets.findBy('id', parseInt(request.params.widget_id));
+      const cloned = JSON.parse(JSON.stringify(w));
+      return response({ widget: cloned });
+    });
+
+    this.get('/widgets', function() {
+      return response({ widgets: _widgets });
+    });
+
+    this.delete('/widgets/:widget_id', success);
   });
 
 
@@ -95,9 +121,13 @@ export default function() {
   };
 
   server.unhandledRequest = function(verb, path) {
-    var error = 'Unhandled request in test environment: ' + path + ' (' + verb + ')';
+    const error = 'Unhandled request in test environment: ' + path + ' (' + verb + ')';
     window.console.error(error);
     throw error;
+  };
+
+  server.checkPassthrough = function(request) {
+    return request.requestHeaders['Discourse-Script'];
   };
 
   return server;

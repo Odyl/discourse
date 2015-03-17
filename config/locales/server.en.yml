@@ -151,6 +151,7 @@ en:
     other: "Sorry, new users can only put %{count} links in a post."
   spamming_host: "Sorry you cannot post a link to that host."
   user_is_suspended: "Suspended users are not allowed to post."
+  topic_not_found: "Something has gone wrong. Perhaps this topic was closed or deleted while you were looking at it?"
 
   just_posted_that: "is too similar to what you recently posted"
   has_already_been_used: "has already been used"
@@ -1024,6 +1025,7 @@ en:
 
     white_listed_spam_host_domains: "A list of domains excluded from spam host testing. New users will never be restricted from creating posts with links to these domains."
     staff_like_weight: "How much extra weighting factor to give staff likes."
+    topic_view_duration_hours: "Count new a topic view once per IP/User every N hours"
 
     levenshtein_distance_spammer_emails: "When matching spammer emails, number of characters difference that will still allow a fuzzy match."
     max_new_accounts_per_registration_ip: "If there are already (n) trust level 0 accounts from this IP (and none is a staff member or at TL2 or higher), stop accepting new signups from that IP."
@@ -1034,6 +1036,8 @@ en:
 
     num_flaggers_to_close_topic: "Minimum number of unique flaggers that is required to automatically pause a topic for intervention"
     num_flags_to_close_topic: "Minimum number of active flags that is required to automatically pause a topic for intervention"
+
+    auto_respond_to_flag_actions: "Enable automatic reply when disposing a flag."
 
     reply_by_email_enabled: "Enable replying to topics via email."
     reply_by_email_address: "Template for reply by email incoming email address, for example: %{reply_key}@reply.example.com or replies+%{reply_key}@example.com"
@@ -1101,8 +1105,9 @@ en:
     default_code_lang: "Default programming language syntax highlighting applied to GitHub code blocks (lang-auto, ruby, python etc.)"
     warn_reviving_old_topic_age: "When someone starts replying to a topic where the last reply is older than this many days, a warning will be displayed. Disable by setting to 0."
     autohighlight_all_code: "Force apply code highlighting to all preformatted code blocks even when they didn't explicitly specify the language."
+    highlighted_languages: "Included syntax highlighting rules. (Warning: including too many langauges may impact performance) see: https://highlightjs.org/static/demo/ for a demo"
 
-    embeddable_host: "Host that can embed the comments from this Discourse forum."
+    embeddable_host: "Host that can embed the comments from this Discourse forum. Hostname only, do not begin with http://"
     feed_polling_enabled: "EMBEDDING ONLY: Whether to embed a RSS/ATOM feed as posts."
     feed_polling_url: "EMBEDDING ONLY: URL of RSS/ATOM feed to embed."
     embed_by_username: "Discourse username of the user who creates the embedded topics."
@@ -2318,4 +2323,3 @@ en:
         Flagging is critical to the health of your community. If you notice any posts that require moderator attention please
         do not hesitate to flag. You may also use the flagging dialog to send <b>private messages</b> to users once you reach
         trust level 1.
-

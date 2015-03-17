@@ -28,7 +28,7 @@ describe PostAction do
       mod = moderator
       Group.refresh_automatic_groups!
 
-      action = PostAction.act(codinghorror, post, PostActionType.types[:notify_moderators], message: "this is my special long message");
+      action = PostAction.act(codinghorror, post, PostActionType.types[:notify_moderators], message: "this is my special long message")
 
       posts = Post.joins(:topic)
                   .select('posts.id, topics.subtype, posts.topic_id')
@@ -54,18 +54,28 @@ describe PostAction do
       action.reload
       expect(action.deleted_at).to eq(nil)
 
-      # Acting on the flag should post an automated status message
+      # Acting on the flag should not post an automated status message (since a moderator already replied)
       expect(topic.posts.count).to eq(2)
       PostAction.agree_flags!(post, admin)
       topic.reload
-      expect(topic.posts.count).to eq(3)
-      expect(topic.posts.last.post_type).to eq(Post.types[:moderator_action])
+      expect(topic.posts.count).to eq(2)
 
-      # Clearing the flags should not post another automated status message
+      # Clearing the flags should not post an automated status message
       PostAction.act(mod, post, PostActionType.types[:notify_moderators], message: "another special message")
       PostAction.clear_flags!(post, admin)
       topic.reload
-      expect(topic.posts.count).to eq(3)
+      expect(topic.posts.count).to eq(2)
+
+      # Acting on the flag should post an automated status message
+      another_post = create_post
+      action = PostAction.act(codinghorror, another_post, PostActionType.types[:notify_moderators], message: "foobar")
+      topic = action.related_post.topic
+
+      expect(topic.posts.count).to eq(1)
+      PostAction.agree_flags!(another_post, admin)
+      topic.reload
+      expect(topic.posts.count).to eq(2)
+      expect(topic.posts.last.post_type).to eq(Post.types[:moderator_action])
     end
 
     describe 'notify_moderators' do
@@ -76,7 +86,7 @@ describe PostAction do
       it "creates a pm if selected" do
         post = build(:post, id: 1000)
         PostCreator.any_instance.expects(:create).returns(post)
-        PostAction.act(build(:user), build(:post), PostActionType.types[:notify_moderators], message: "this is my special message");
+        PostAction.act(build(:user), build(:post), PostActionType.types[:notify_moderators], message: "this is my special message")
       end
     end
 
@@ -89,7 +99,7 @@ describe PostAction do
 
       it "sends an email to user if selected" do
         PostCreator.any_instance.expects(:create).returns(build(:post))
-        PostAction.act(build(:user), post, PostActionType.types[:notify_user], message: "this is my special message");
+        PostAction.act(build(:user), post, PostActionType.types[:notify_user], message: "this is my special message")
       end
     end
   end
@@ -454,6 +464,34 @@ describe PostAction do
         message_id = PostAction.create_message_for_post_action(Discourse.system_user, post, PostActionType.types[post_action_type], message: "WAT")
         expect(message_id).to be_present
       end
+    end
+
+  end
+
+  describe ".add_moderator_post_if_needed" do
+
+    it "should not add a moderator post when it's disabled" do
+      post = create_post
+
+      action = PostAction.act(moderator, post, PostActionType.types[:spam], message: "WAT")
+      action.reload
+      topic = action.related_post.topic
+      expect(topic.posts.count).to eq(1)
+
+      SiteSetting.expects(:auto_respond_to_flag_actions).returns(false)
+      PostAction.agree_flags!(post, admin)
+
+      topic.reload
+      expect(topic.posts.count).to eq(1)
+    end
+
+    it "should not generate a notification for auto-message" do
+      post = create_post
+      PostAction.act(moderator, post, PostActionType.types[:spam], message: "WAT")
+
+      PostAlerter.expects(:post_created).never
+
+      PostAction.agree_flags!(post, admin)
     end
 
   end

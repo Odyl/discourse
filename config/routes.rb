@@ -25,7 +25,13 @@ Discourse::Application.routes.draw do
 
   resources :about
 
-  get "site" => "site#index"
+  get "site" => "site#site"
+  namespace :site do
+    get "settings"
+    get "custom_html"
+    get "banner"
+    get "emoji"
+  end
   get "site_customizations/:key" => "site_customizations#show"
 
   resources :forums
@@ -90,6 +96,7 @@ Discourse::Application.routes.draw do
       get "badges"
       get "leader_requirements" => "users#tl3_requirements"
       get "tl3_requirements"
+      put "anonymize"
     end
 
 
@@ -267,6 +274,8 @@ Discourse::Application.routes.draw do
   get "letter_avatar/:username/:size/:version.png" => "user_avatars#show_letter", format: false, constraints: { hostname: /[\w\.-]+/ }
   get "user_avatar/:hostname/:username/:size/:version.png" => "user_avatars#show", format: false, constraints: { hostname: /[\w\.-]+/ }
 
+  get "highlight-js/:hostname/:version.js" => "highlight_js#show", format: false, constraints: { hostname: /[\w\.-]+/ }
+
   get "uploads/:site/:id/:sha.:extension" => "uploads#show", constraints: {site: /\w+/, id: /\d+/, sha: /[a-z0-9]{15,16}/i, extension: /\w{2,}/}
   get "uploads/:site/:sha" => "uploads#show", constraints: { site: /\w+/, sha: /[a-z0-9]{40}/}
   post "uploads" => "uploads#create"
@@ -383,6 +392,7 @@ Discourse::Application.routes.draw do
   put "topics/reset-new" => 'topics#reset_new'
   post "topics/timings"
   get "topics/similar_to"
+  get "topics/feature_stats"
   get "topics/created-by/:username" => "list#topics_by", as: "topics_by", constraints: {username: USERNAME_ROUTE_FORMAT}
   get "topics/private-messages/:username" => "list#private_messages", as: "topics_private_messages", constraints: {username: USERNAME_ROUTE_FORMAT}
   get "topics/private-messages-sent/:username" => "list#private_messages_sent", as: "topics_private_messages_sent", constraints: {username: USERNAME_ROUTE_FORMAT}

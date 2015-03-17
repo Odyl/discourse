@@ -58,11 +58,9 @@ class ImportScripts::VBulletin < ImportScripts::Base
 
     user_count = mysql_query("SELECT COUNT(userid) count FROM user").first["count"]
 
-    # TODO: add email back in when using real data
-
     batches(BATCH_SIZE) do |offset|
       users = mysql_query <<-SQL
-          SELECT userid, username, homepage, usertitle, usergroupid, joindate
+          SELECT userid, username, homepage, usertitle, usergroupid, joindate, email
             FROM user
         ORDER BY userid
            LIMIT #{BATCH_SIZE}
@@ -183,7 +181,7 @@ class ImportScripts::VBulletin < ImportScripts::Base
         name: @htmlentities.decode(category["title"]).strip,
         position: category["displayorder"],
         description: @htmlentities.decode(category["description"]).strip,
-        parent_category_id: category_from_imported_category_id(category["parentid"]).try(:[], "id")
+        parent_category_id: category_id_from_imported_category_id(category["parentid"])
       }
     end
   end
@@ -218,7 +216,7 @@ class ImportScripts::VBulletin < ImportScripts::Base
           id: topic_id,
           user_id: user_id_from_imported_user_id(topic["postuserid"]) || Discourse::SYSTEM_USER_ID,
           title: @htmlentities.decode(topic["title"]).strip[0...255],
-          category: category_from_imported_category_id(topic["forumid"]).try(:name),
+          category: category_id_from_imported_category_id(topic["forumid"]),
           raw: raw,
           created_at: parse_timestamp(topic["dateline"]),
           visible: topic["visible"].to_i == 1,

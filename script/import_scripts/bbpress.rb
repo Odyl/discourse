@@ -2,12 +2,12 @@
 # `createdb bbpress`
 # `bundle exec rake db:migrate`
 
+require 'mysql2'
 require File.expand_path(File.dirname(__FILE__) + "/base.rb")
 
-BB_PRESS_DB = "bbpress"
+BB_PRESS_DB = ENV['BBPRESS_DB'] || "bbpress"
 DB_TABLE_PREFIX = "wp_"
 
-require 'mysql2'
 
 class ImportScripts::Bbpress < ImportScripts::Base
 
@@ -40,8 +40,13 @@ class ImportScripts::Bbpress < ImportScripts::Base
       ActiveSupport::HashWithIndifferentAccess.new(u)
     end
 
-    create_categories(@client.query("SELECT id, post_name from #{table_name 'posts'} WHERE post_type = 'forum' AND post_name != ''")) do |c|
-      {id: c['id'], name: c['post_name']}
+    create_categories(@client.query("SELECT id, post_name, post_parent from #{table_name 'posts'} WHERE post_type = 'forum' AND post_name != '' ORDER BY post_parent")) do |c|
+      result = {id: c['id'], name: c['post_name']}
+      parent_id = c['post_parent'].to_i
+      if parent_id > 0
+        result[:parent_category_id] = category_id_from_imported_category_id(parent_id)
+      end
+      result
     end
 
     import_posts
@@ -87,7 +92,7 @@ class ImportScripts::Bbpress < ImportScripts::Base
         mapped[:custom_fields] = {import_id: post["id"]}
 
         if post["post_type"] == "topic"
-          mapped[:category] = category_from_imported_category_id(post["post_parent"]).try(:name)
+          mapped[:category] = category_id_from_imported_category_id(post["post_parent"])
           mapped[:title] = CGI.unescapeHTML post["post_title"]
         else
           parent = topic_lookup_from_imported_post_id(post["post_parent"])

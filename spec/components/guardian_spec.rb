@@ -266,6 +266,9 @@ describe Guardian do
     let(:user) { topic.user }
     let(:moderator) { Fabricate(:moderator) }
     let(:admin) { Fabricate(:admin) }
+    let(:private_category)  { Fabricate(:private_category, group: group) }
+    let(:group_private_topic) { Fabricate(:topic, category: private_category) }
+    let(:group_manager) { group_private_topic.user.tap { |u| group.add(u); group.appoint_manager(u) } }
 
     it 'handles invitation correctly' do
       expect(Guardian.new(nil).can_invite_to?(topic)).to be_falsey
@@ -298,6 +301,9 @@ describe Guardian do
       expect(Guardian.new(admin).can_invite_to?(private_topic)).to be_truthy
     end
 
+    it 'returns true for a group manager' do
+      expect(Guardian.new(group_manager).can_invite_to?(group_private_topic)).to be_truthy
+    end
   end
 
   describe 'can_see?' do
@@ -1582,6 +1588,48 @@ describe Guardian do
     context "for admins" do
       let(:actor) { admin }
       include_examples "can_delete_all_posts examples"
+    end
+  end
+
+  describe "can_anonymize_user?" do
+    it "is false without a logged in user" do
+      expect(Guardian.new(nil).can_anonymize_user?(user)).to be_falsey
+    end
+
+    it "is false without a user to look at" do
+      expect(Guardian.new(admin).can_anonymize_user?(nil)).to be_falsey
+    end
+
+    it "is false for a regular user" do
+      expect(Guardian.new(user).can_anonymize_user?(coding_horror)).to be_falsey
+    end
+
+    it "is false for myself" do
+      expect(Guardian.new(user).can_anonymize_user?(user)).to be_falsey
+    end
+
+    it "is true for admin anonymizing a regular user" do
+      Guardian.new(admin).can_anonymize_user?(user).should == true
+    end
+
+    it "is true for moderator anonymizing a regular user" do
+      Guardian.new(moderator).can_anonymize_user?(user).should == true
+    end
+
+    it "is false for admin anonymizing an admin" do
+      expect(Guardian.new(admin).can_anonymize_user?(Fabricate(:admin))).to be_falsey
+    end
+
+    it "is false for admin anonymizing a moderator" do
+      expect(Guardian.new(admin).can_anonymize_user?(Fabricate(:moderator))).to be_falsey
+    end
+
+    it "is false for moderator anonymizing an admin" do
+      expect(Guardian.new(moderator).can_anonymize_user?(admin)).to be_falsey
+    end
+
+    it "is false for moderator anonymizing a moderator" do
+      expect(Guardian.new(moderator).can_anonymize_user?(Fabricate(:moderator))).to be_falsey
     end
   end
 

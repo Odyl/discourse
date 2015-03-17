@@ -32,6 +32,9 @@ module Discourse
     require 'es6_module_transpiler/rails'
     require 'js_locale_helper'
 
+    # tiny file needed by site settings
+    require 'highlight_js/highlight_js'
+
     # mocha hates us, active_support/testing/mochaing.rb line 2 is requiring the wrong
     #  require, patched in source, on upgrade remove this
     if Rails.env.test? || Rails.env.development?
@@ -155,6 +158,10 @@ module Discourse
 
     require 'auth'
     Discourse.activate_plugins! unless Rails.env.test? and ENV['LOAD_PLUGINS'] != "1"
+
+    if GlobalSetting.relative_url_root.present?
+      config.relative_url_root = GlobalSetting.relative_url_root
+    end
 
     config.after_initialize do
       # So open id logs somewhere sane
