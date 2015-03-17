@@ -261,4 +261,6 @@ group :profile do
   # gem 'rack-perftools_profiler', require: 'rack/perftools_profiler', platform: :mri_19
 end
 
+# Riffle-specific gems
 gem 'rails_12factor', group: :production
+gem 'rollbar'

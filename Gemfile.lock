@@ -348,6 +348,8 @@ GEM
       netrc (~> 0.7)
     rinku (1.7.3)
     rmmseg-cpp (0.2.9)
+    rollbar (1.4.4)
+      multi_json (~> 1.3)
     rspec (2.99.0)
       rspec-core (~> 2.99.0)
       rspec-expectations (~> 2.99.0)
@@ -531,6 +533,7 @@ DEPENDENCIES
   rest-client
   rinku
   rmmseg-cpp
+  rollbar
   rspec (= 2.99.0)
   rspec-given
   rspec-rails
