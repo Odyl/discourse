@@ -263,4 +263,3 @@ end
 
 # Riffle-specific gems
 gem 'rails_12factor', group: :production
-gem 'rollbar'
