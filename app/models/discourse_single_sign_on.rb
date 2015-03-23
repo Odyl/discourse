@@ -112,6 +112,7 @@ class DiscourseSingleSignOn < SingleSignOn
   def change_external_attributes_and_override(sso_record, user)
     if bio && user.user_profile.bio_raw != bio
       user.user_profile.bio_raw = bio
+      user.user_profile.save
     end
 
     if SiteSetting.sso_overrides_email && email != sso_record.external_email
