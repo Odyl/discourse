@@ -68,7 +68,7 @@ Discourse::Application.configure do
 
   # Discourse strongly recommend you use a CDN.
   # For origin pull cdns all you need to do is register an account and configure
-  config.action_controller.asset_host = "//" + ENV['FASTLY_CDN_URL'] if ENV["FASTLY_CDN_URL"]
+  config.action_controller.asset_host = "//" + ENV['FASTLY_CDN_URL'] unless ENV["FASTLY_CDN_URL"].nil? or ENV["FASTLY_CDN_URL"].blank?
 
   # a comma delimited list of emails your devs have
   # developers have god like rights and may impersonate anyone in the system
