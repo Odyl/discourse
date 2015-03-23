@@ -110,7 +110,7 @@ class DiscourseSingleSignOn < SingleSignOn
   end
 
   def change_external_attributes_and_override(sso_record, user)
-    if bio && bio_cooked != bio
+    if bio && user.bio_cooked != bio
       user.bio_cooked = bio
     end
 
