@@ -245,6 +245,12 @@ describe Guardian do
       expect(Guardian.new(moderator).can_invite_to_forum?).to be_truthy
     end
 
+    it 'returns false when max_invites_per_day is 0' do
+      # let's also break it while here
+      SiteSetting.max_invites_per_day = "a"
+      expect(Guardian.new(moderator).can_invite_to_forum?).to be_falsey
+    end
+
     it 'returns false when the site requires approving users and is regular' do
       SiteSetting.expects(:must_approve_users?).returns(true)
       expect(Guardian.new(user).can_invite_to_forum?).to be_falsey
@@ -275,6 +281,9 @@ describe Guardian do
       expect(Guardian.new(moderator).can_invite_to?(nil)).to be_falsey
       expect(Guardian.new(moderator).can_invite_to?(topic)).to be_truthy
       expect(Guardian.new(user).can_invite_to?(topic)).to be_falsey
+
+      SiteSetting.max_invites_per_day = 0
+      expect(Guardian.new(moderator).can_invite_to?(topic)).to be_falsey
     end
 
     it 'returns true when the site requires approving users and is mod' do
@@ -530,7 +539,6 @@ describe Guardian do
         category.save
 
         expect(Guardian.new(topic.user).can_create?(Post, topic)).to be_falsey
-
       end
 
       it "is false when not logged in" do
@@ -888,6 +896,13 @@ describe Guardian do
 
         it 'returns true at trust level 3' do
           expect(Guardian.new(trust_level_3).can_edit?(topic)).to eq(true)
+        end
+
+        it "returns false when the category is read only" do
+          topic.category.set_permissions(everyone: :readonly)
+          topic.category.save
+
+          expect(Guardian.new(trust_level_3).can_edit?(topic)).to eq(false)
         end
       end
 
@@ -1609,11 +1624,11 @@ describe Guardian do
     end
 
     it "is true for admin anonymizing a regular user" do
-      Guardian.new(admin).can_anonymize_user?(user).should == true
+      expect(Guardian.new(admin).can_anonymize_user?(user)).to eq(true)
     end
 
     it "is true for moderator anonymizing a regular user" do
-      Guardian.new(moderator).can_anonymize_user?(user).should == true
+      expect(Guardian.new(moderator).can_anonymize_user?(user)).to eq(true)
     end
 
     it "is false for admin anonymizing an admin" do

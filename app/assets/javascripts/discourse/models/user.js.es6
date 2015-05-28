@@ -1,6 +1,7 @@
+import RestModel from 'discourse/models/rest';
 import avatarTemplate from 'discourse/lib/avatar-template';
 
-const User = Discourse.Model.extend({
+const User = RestModel.extend({
 
   hasPMs: Em.computed.gt("private_messages_stats.all", 0),
   hasStartedPMs: Em.computed.gt("private_messages_stats.mine", 0),
@@ -68,7 +69,7 @@ const User = Discourse.Model.extend({
   profileBackground: function() {
     var url = this.get('profile_background');
     if (Em.isEmpty(url) || !Discourse.SiteSettings.allow_profile_backgrounds) { return; }
-    return 'background-image: url(' + Discourse.getURLWithCDN(url) + ')';
+    return ('background-image: url(' + Discourse.getURLWithCDN(url) + ')').htmlSafe();
   }.property('profile_background'),
 
   /**
@@ -170,26 +171,31 @@ const User = Discourse.Model.extend({
     @returns {Promise} the result of the operation
   **/
   save: function() {
-    var self = this,
-        data = this.getProperties('auto_track_topics_after_msecs',
-                               'bio_raw',
-                               'website',
-                               'location',
-                               'name',
-                               'locale',
-                               'email_digests',
-                               'email_direct',
-                               'email_always',
-                               'email_private_messages',
-                               'dynamic_favicon',
-                               'digest_after_days',
-                               'new_topic_duration_minutes',
-                               'external_links_in_new_tab',
-                               'mailing_list_mode',
-                               'enable_quoting',
-                               'disable_jump_reply',
-                               'custom_fields',
-                               'user_fields');
+    const self = this,
+          data = this.getProperties(
+            'auto_track_topics_after_msecs',
+            'bio_raw',
+            'website',
+            'location',
+            'name',
+            'locale',
+            'email_digests',
+            'email_direct',
+            'email_always',
+            'email_private_messages',
+            'dynamic_favicon',
+            'digest_after_days',
+            'new_topic_duration_minutes',
+            'external_links_in_new_tab',
+            'mailing_list_mode',
+            'enable_quoting',
+            'disable_jump_reply',
+            'custom_fields',
+            'user_fields',
+            'muted_usernames',
+            'profile_background',
+            'card_background'
+          );
 
     ['muted','watched','tracked'].forEach(function(s){
       var cats = self.get(s + 'Categories').map(function(c){ return c.get('id')});
@@ -202,6 +208,8 @@ const User = Discourse.Model.extend({
       data['edit_history_public'] = this.get('edit_history_public');
     }
 
+    // TODO: We can remove this when migrated fully to rest model.
+    this.set('isSaving', true);
     return Discourse.ajax("/users/" + this.get('username_lower'), {
       data: data,
       type: 'PUT'
@@ -210,6 +218,8 @@ const User = Discourse.Model.extend({
 
       var userProps = self.getProperties('enable_quoting', 'external_links_in_new_tab', 'dynamic_favicon');
       Discourse.User.current().setProperties(userProps);
+    }).finally(() => {
+      this.set('isSaving', false);
     });
   },
 
@@ -256,12 +266,7 @@ const User = Discourse.Model.extend({
            ua.action_type === Discourse.UserAction.TYPES.topics;
   },
 
-  /**
-  The user's stat count, excluding PMs.
-
-    @property statsCountNonPM
-    @type {Integer}
-  **/
+  // The user's stat count, excluding PMs.
   statsCountNonPM: function() {
     var self = this;
 
@@ -275,12 +280,7 @@ const User = Discourse.Model.extend({
     return count;
   }.property('statsExcludingPms.@each.count'),
 
-  /**
-  The user's stats, excluding PMs.
-
-    @property statsExcludingPms
-    @type {Array}
-  **/
+  // The user's stats, excluding PMs.
   statsExcludingPms: function() {
     if (this.blank('stats')) return [];
     return this.get('stats').rejectProperty('isPM');
@@ -436,27 +436,19 @@ const User = Discourse.Model.extend({
 
 User.reopenClass(Discourse.Singleton, {
 
-  /**
-    Find a `Discourse.User` for a given username.
-
-    @method findByUsername
-    @returns {Promise} a promise that resolves to a `Discourse.User`
-  **/
+  // Find a `Discourse.User` for a given username.
   findByUsername: function(username, options) {
-    var user = Discourse.User.create({username: username});
+    const user = Discourse.User.create({username: username});
     return user.findDetails(options);
   },
 
-  /**
-    The current singleton will retrieve its attributes from the `PreloadStore`
-    if it exists. Otherwise, no instance is created.
-
-    @method createCurrent
-    @returns {Discourse.User} the user, if logged in.
-  **/
+  // TODO: Use app.register and junk Discourse.Singleton
   createCurrent: function() {
     var userJson = PreloadStore.get('currentUser');
-    if (userJson) { return Discourse.User.create(userJson); }
+    if (userJson) {
+      const store = Discourse.__container__.lookup('store:main');
+      return store.createRecord('user', userJson);
+    }
     return null;
   },
 

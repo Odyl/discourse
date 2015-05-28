@@ -89,7 +89,7 @@ describe SessionController do
 
     it 'respects IP restrictions on login' do
       sso = sso_for_ip_specs
-      user = DiscourseSingleSignOn.parse(sso.payload).lookup_or_create_user(request.remote_ip)
+      _user = DiscourseSingleSignOn.parse(sso.payload).lookup_or_create_user(request.remote_ip)
 
       sso = sso_for_ip_specs
       screened_ip = Fabricate(:screened_ip_address)
@@ -193,6 +193,54 @@ describe SessionController do
       expect(logged_on_user.custom_fields["bla"]).to eq(nil)
     end
 
+    context 'when sso emails are not trusted' do
+      context 'if you have not activated your account' do
+        it 'does not log you in' do
+          sso = get_sso('/a/')
+          sso.external_id = '666' # the number of the beast
+          sso.email = 'bob@bob.com'
+          sso.name = 'Sam Saffron'
+          sso.username = 'sam'
+          sso.require_activation = true
+
+          get :sso_login, Rack::Utils.parse_query(sso.payload)
+
+          logged_on_user = Discourse.current_user_provider.new(request.env).current_user
+          expect(logged_on_user).to eq(nil)
+        end
+
+        it 'sends an activation email' do
+          Jobs.expects(:enqueue).with(:user_email, has_entries(type: :signup))
+          sso = get_sso('/a/')
+          sso.external_id = '666' # the number of the beast
+          sso.email = 'bob@bob.com'
+          sso.name = 'Sam Saffron'
+          sso.username = 'sam'
+          sso.require_activation = true
+
+          get :sso_login, Rack::Utils.parse_query(sso.payload)
+        end
+      end
+
+      context 'if you have activated your account' do
+        it 'allows you to log in' do
+          sso = get_sso('/hello/world')
+          sso.external_id = '997'
+          sso.sso_url = "http://somewhere.over.com/sso_login"
+          sso.require_activation = true
+
+          user = Fabricate(:user)
+          user.create_single_sign_on_record(external_id: '997', last_payload: '')
+          user.stubs(:active?).returns(true)
+
+          get :sso_login, Rack::Utils.parse_query(sso.payload)
+
+          logged_on_user = Discourse.current_user_provider.new(request.env).current_user
+          expect(user.id).to eq(logged_on_user.id)
+        end
+      end
+    end
+
     it 'allows login to existing account with valid nonce' do
       sso = get_sso('/hello/world')
       sso.external_id = '997'
@@ -213,7 +261,7 @@ describe SessionController do
 
       # nonce is bad now
       get :sso_login, Rack::Utils.parse_query(sso.payload)
-      expect(response.code).to eq('500')
+      expect(response.code).to eq('419')
     end
 
     it 'can act as an SSO provider' do
@@ -288,7 +336,7 @@ describe SessionController do
         logged_on_user = Discourse.current_user_provider.new(request.env).current_user
         expect(logged_on_user.username).to eq(@suggested_username)
         expect(logged_on_user.email).to eq("#{@reversed_username}@garbage.org")
-        expect(logged_on_user.name).to eq(@suggested_name)
+        expect(logged_on_user.name).to eq(@sso.name)
       end
 
       it 'does not change matching attributes for an existing account' do
@@ -304,18 +352,6 @@ describe SessionController do
         expect(logged_on_user.email).to eq(@user.email)
       end
 
-      it 'does not change attributes for unchanged external attributes' do
-        @user.single_sign_on_record.external_username = @sso.username
-        @user.single_sign_on_record.external_email = @sso.email
-        @user.single_sign_on_record.external_name = @sso.name
-        @user.single_sign_on_record.save
-
-        get :sso_login, Rack::Utils.parse_query(@sso.payload)
-        logged_on_user = Discourse.current_user_provider.new(request.env).current_user
-        expect(logged_on_user.username).to eq(@user.username)
-        expect(logged_on_user.email).to eq(@user.email)
-        expect(logged_on_user.name).to eq(@user.name)
-      end
     end
   end
 

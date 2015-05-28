@@ -2,9 +2,6 @@ require 'spec_helper'
 require_dependency 'post_destroyer'
 
 describe PostAction do
-  it { is_expected.to belong_to :user }
-  it { is_expected.to belong_to :post }
-  it { is_expected.to belong_to :post_action_type }
   it { is_expected.to rate_limit }
 
   let(:moderator) { Fabricate(:moderator) }
@@ -198,6 +195,28 @@ describe PostAction do
   end
 
   describe 'when a user likes something' do
+
+    it 'should generate notifications correctly' do
+      ActiveRecord::Base.observers.enable :all
+      PostAction.act(codinghorror, post, PostActionType.types[:like])
+      expect(Notification.count).to eq(1)
+
+      mutee = Fabricate(:user)
+
+      post = Fabricate(:post)
+      MutedUser.create!(user_id: post.user.id, muted_user_id: mutee.id)
+      PostAction.act(mutee, post, PostActionType.types[:like])
+
+      expect(Notification.count).to eq(1)
+
+      # you can not mute admin, sorry
+      MutedUser.create!(user_id: post.user.id, muted_user_id: admin.id)
+      PostAction.act(admin, post, PostActionType.types[:like])
+
+      expect(Notification.count).to eq(2)
+
+    end
+
     it 'should increase the `like_count` and `like_score` when a user likes something' do
       PostAction.act(codinghorror, post, PostActionType.types[:like])
       post.reload
@@ -265,7 +284,7 @@ describe PostAction do
         # A post with no flags has 0 for flag counts
         expect(PostAction.flag_counts_for(post.id)).to eq([0, 0])
 
-        flag = PostAction.act(eviltrout, post, PostActionType.types[:spam])
+        _flag = PostAction.act(eviltrout, post, PostActionType.types[:spam])
         expect(PostAction.flag_counts_for(post.id)).to eq([0, 1])
 
         # If staff takes action, it is ranked higher
@@ -367,7 +386,7 @@ describe PostAction do
 
     it "can flag the topic instead of a post" do
       post1 = create_post
-      post2 = create_post(topic: post1.topic)
+      _post2 = create_post(topic: post1.topic)
       post_action = PostAction.act(Fabricate(:user), post1, PostActionType.types[:spam], { flag_topic: true })
       expect(post_action.targets_topic).to eq(true)
     end
@@ -436,6 +455,7 @@ describe PostAction do
       end
 
       expect(topic.reload.closed).to eq(true)
+
     end
 
   end
@@ -468,6 +488,18 @@ describe PostAction do
 
   end
 
+  describe ".lookup_for" do
+    it "returns the correct map" do
+      user = Fabricate(:user)
+      post = Fabricate(:post)
+      post_action = PostAction.create(user_id: user.id, post_id: post.id, post_action_type_id: 1)
+
+      map = PostAction.lookup_for(user, [post.topic], post_action.post_action_type_id)
+
+      expect(map).to eq({post.topic_id => [post.post_number]})
+    end
+  end
+
   describe ".add_moderator_post_if_needed" do
 
     it "should not add a moderator post when it's disabled" do
@@ -484,14 +516,32 @@ describe PostAction do
       topic.reload
       expect(topic.posts.count).to eq(1)
     end
+  end
 
-    it "should not generate a notification for auto-message" do
-      post = create_post
-      PostAction.act(moderator, post, PostActionType.types[:spam], message: "WAT")
+  describe "rate limiting" do
 
-      PostAlerter.expects(:post_created).never
+    def limiter(tl)
+      user = Fabricate.build(:user)
+      user.trust_level = tl
+      action = PostAction.new(user: user, post_action_type_id: PostActionType.types[:like])
+      action.post_action_rate_limiter
+    end
 
-      PostAction.agree_flags!(post, admin)
+    it "should scale up like limits depending on liker" do
+      expect(limiter(0).max).to eq SiteSetting.max_likes_per_day
+      expect(limiter(1).max).to eq SiteSetting.max_likes_per_day
+      expect(limiter(2).max).to eq (SiteSetting.max_likes_per_day * SiteSetting.tl2_additional_likes_per_day_multiplier).to_i
+      expect(limiter(3).max).to eq (SiteSetting.max_likes_per_day * SiteSetting.tl3_additional_likes_per_day_multiplier).to_i
+      expect(limiter(4).max).to eq (SiteSetting.max_likes_per_day * SiteSetting.tl4_additional_likes_per_day_multiplier).to_i
+
+      SiteSetting.tl2_additional_likes_per_day_multiplier = -1
+      expect(limiter(2).max).to eq SiteSetting.max_likes_per_day
+
+      SiteSetting.tl2_additional_likes_per_day_multiplier = 0.8
+      expect(limiter(2).max).to eq SiteSetting.max_likes_per_day
+
+      SiteSetting.tl2_additional_likes_per_day_multiplier = "bob"
+      expect(limiter(2).max).to eq SiteSetting.max_likes_per_day
     end
 
   end

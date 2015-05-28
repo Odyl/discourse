@@ -13,16 +13,17 @@ export default DiscourseController.extend({
     if (this.blank('buffer')) this.set('post', null);
   }.observes('buffer'),
 
-  /**
-    Save the currently selected text and displays the
-    "quote reply" button
-  **/
+  // Save the currently selected text and displays the
+  //  "quote reply" button
   selectText(postId) {
     // anonymous users cannot "quote-reply"
-    if (!Discourse.User.current()) return;
+    if (!this.currentUser) return;
 
-    // don't display the "quote-reply" button if we can't create a post
-    if (!this.get('controllers.topic.model.details.can_create_post')) return;
+    // don't display the "quote-reply" button if we can't reply
+    const topicDetails = this.get('controllers.topic.model.details');
+    if (!(topicDetails.get('can_reply_as_new_topic') || topicDetails.get('can_create_post'))) {
+      return;
+    }
 
     const selection = window.getSelection();
     // no selections
@@ -42,7 +43,7 @@ export default DiscourseController.extend({
     if (this.get('buffer') === selectedText) return;
 
     // we need to retrieve the post data from the posts collection in the topic controller
-    const postStream = this.get('controllers.topic.postStream');
+    const postStream = this.get('controllers.topic.model.postStream');
     this.set('post', postStream.findLoadedPost(postId));
     this.set('buffer', selectedText);
 
@@ -56,7 +57,7 @@ export default DiscourseController.extend({
     // and insert it at the start of our selection range
     range.insertNode(markerElement);
 
-    // retrieve the position of the market
+    // retrieve the position of the marker
     const markerOffset = $(markerElement).offset(),
           $quoteButton = $('.quote-button');
 
@@ -85,7 +86,15 @@ export default DiscourseController.extend({
   },
 
   quoteText() {
+
     const post = this.get('post');
+
+    // If we can't create a post, delegate to reply as new topic
+    if (!this.get('controllers.topic.model.details.can_create_post')) {
+      this.get('controllers.topic').send('replyAsNewTopic', post);
+      return;
+    }
+
     const composerController = this.get('controllers.composer');
     const composerOpts = {
       action: Discourse.Composer.REPLY,

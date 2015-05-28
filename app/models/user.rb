@@ -55,6 +55,9 @@ class User < ActiveRecord::Base
   has_many :group_managers, dependent: :destroy
   has_many :managed_groups, through: :group_managers, source: :group
 
+  has_many :muted_user_records, class_name: 'MutedUser'
+  has_many :muted_users, through: :muted_user_records
+
   has_one :user_search_data, dependent: :destroy
   has_one :api_key, dependent: :destroy
 
@@ -69,6 +72,7 @@ class User < ActiveRecord::Base
   validates :email, presence: true, uniqueness: true
   validates :email, email: true, if: :email_changed?
   validate :password_validator
+  validates :name, user_full_name: true, if: :name_changed?
   validates :ip_address, allowed_ip_address: {on: :create, message: :signup_not_allowed}
 
   after_initialize :add_trust_level
@@ -104,8 +108,17 @@ class User < ActiveRecord::Base
   # set to true to optimize creation and save for imports
   attr_accessor :import_mode
 
-  # excluding fake users like the system user
-  scope :real, -> { where('id > 0') }
+  # excluding fake users like the system user or anonymous users
+  scope :real, -> { where('id > 0').where('NOT EXISTS(
+                     SELECT 1
+                     FROM user_custom_fields ucf
+                     WHERE
+                       ucf.user_id = users.id AND
+                       ucf.name = ? AND
+                       ucf.value::int > 0
+                  )', 'master_id') }
+
+  scope :staff, -> { where("admin OR moderator") }
 
   # TODO-PERF: There is no indexes on any of these
   # and NotifyMailingListSubscribers does a select-all-and-loop
@@ -231,23 +244,51 @@ class User < ActiveRecord::Base
     User.email_hash(email)
   end
 
-  def unread_notifications_by_type
-    @unread_notifications_by_type ||= notifications.visible.where("id > ? and read = false", seen_notification_id).group(:notification_type).count
-  end
-
   def reload
-    @unread_notifications_by_type = nil
+    @unread_notifications = nil
     @unread_total_notifications = nil
     @unread_pms = nil
     super
   end
 
   def unread_private_messages
-    @unread_pms ||= notifications.visible.where("read = false AND notification_type = ?", Notification.types[:private_message]).count
+    @unread_pms ||=
+      begin
+        # perf critical, much more efficient than AR
+        sql = "
+           SELECT COUNT(*) FROM notifications n
+           LEFT JOIN topics t ON n.topic_id = t.id
+           WHERE
+            t.deleted_at IS NULL AND
+            n.notification_type = :type AND
+            n.user_id = :user_id AND
+            NOT read"
+
+        User.exec_sql(sql, user_id: id,
+                           type:  Notification.types[:private_message])
+            .getvalue(0,0).to_i
+      end
   end
 
   def unread_notifications
-    unread_notifications_by_type.except(Notification.types[:private_message]).values.sum
+    @unread_notifications ||=
+      begin
+        # perf critical, much more efficient than AR
+        sql = "
+           SELECT COUNT(*) FROM notifications n
+           LEFT JOIN topics t ON n.topic_id = t.id
+           WHERE
+            t.deleted_at IS NULL AND
+            n.notification_type <> :pm AND
+            n.user_id = :user_id AND
+            NOT read AND
+            n.id > :seen_notification_id"
+
+        User.exec_sql(sql, user_id: id,
+                           seen_notification_id: seen_notification_id,
+                           pm:  Notification.types[:private_message])
+            .getvalue(0,0).to_i
+      end
   end
 
   def total_unread_notifications
@@ -308,8 +349,16 @@ class User < ActiveRecord::Base
     self.password_hash == hash_password(password, salt)
   end
 
+  def first_day_user?
+    !staff? &&
+    trust_level < TrustLevel[2] &&
+    created_at >= 24.hours.ago
+  end
+
   def new_user?
-    created_at >= 24.hours.ago || trust_level == TrustLevel[0]
+    (created_at >= 24.hours.ago || trust_level == TrustLevel[0]) &&
+      trust_level < TrustLevel[2] &&
+      !staff?
   end
 
   def seen_before?
@@ -373,11 +422,11 @@ class User < ActiveRecord::Base
     return letter_avatar_template(username) if !uploaded_avatar_id
     id = uploaded_avatar_id
     username ||= ""
-    "/user_avatar/#{RailsMultisite::ConnectionManagement.current_hostname}/#{username.downcase}/{size}/#{id}.png"
+    "#{Discourse.base_uri}/user_avatar/#{RailsMultisite::ConnectionManagement.current_hostname}/#{username.downcase}/{size}/#{id}.png"
   end
 
   def self.letter_avatar_template(username)
-    "/letter_avatar/#{username.downcase}/{size}/#{LetterAvatar::VERSION}.png"
+    "#{Discourse.base_uri}/letter_avatar/#{username.downcase}/{size}/#{LetterAvatar.version}.png"
   end
 
   def avatar_template
@@ -431,6 +480,8 @@ class User < ActiveRecord::Base
 
   def delete_all_posts!(guardian)
     raise Discourse::InvalidAccess unless guardian.can_delete_all_posts? self
+
+    QueuedPost.where(user_id: id).delete_all
 
     posts.order("post_number desc").each do |p|
       PostDestroyer.new(guardian.user, p).destroy
@@ -557,10 +608,6 @@ class User < ActiveRecord::Base
     uploaded_avatar.present?
   end
 
-  def added_a_day_ago?
-    created_at > 1.day.ago
-  end
-
   def generate_api_key(created_by)
     if api_key.present?
       api_key.regenerate!(created_by)
@@ -638,6 +685,9 @@ class User < ActiveRecord::Base
     if SiteSetting.automatically_download_gravatars? && !avatar.last_gravatar_download_attempt
       Jobs.enqueue(:update_gravatar, user_id: self.id, avatar_id: avatar.id)
     end
+
+    # mark all the user's quoted posts as "needing a rebake"
+    Post.rebake_all_quoted_posts(self.id) if self.uploaded_avatar_id_changed?
   end
 
   def first_post_created_at
@@ -711,6 +761,12 @@ class User < ActiveRecord::Base
 
   def create_user_profile
     UserProfile.create(user_id: id)
+  end
+
+  def anonymous?
+    SiteSetting.allow_anonymous_posting &&
+      trust_level >= 1 &&
+      custom_fields["master_id"].to_i > 0
   end
 
   protected
@@ -801,11 +857,13 @@ class User < ActiveRecord::Base
   end
 
   def send_approval_email
-    Jobs.enqueue(:user_email,
-      type: :signup_after_approval,
-      user_id: id,
-      email_token: email_tokens.first.token
-    )
+    if SiteSetting.must_approve_users
+      Jobs.enqueue(:user_email,
+        type: :signup_after_approval,
+        user_id: id,
+        email_token: email_tokens.first.token
+      )
+    end
   end
 
   def set_default_email_digest
@@ -838,7 +896,7 @@ class User < ActiveRecord::Base
     to_destroy.each do |u|
       begin
         destroyer.destroy(u, context: I18n.t(:purge_reason))
-      rescue Discourse::InvalidAccess
+      rescue Discourse::InvalidAccess, UserDestroyer::PostsExistError
         # if for some reason the user can't be deleted, continue on to the next one
       end
     end

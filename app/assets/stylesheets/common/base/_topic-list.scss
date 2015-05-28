@@ -2,6 +2,7 @@
   position: absolute;
   top: 4px;
   width: 100%;
+  z-index: 1;
 }
 
 .list-controls {
@@ -15,20 +16,19 @@
 
 .topic-list {
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  border-top: 1px solid dark-light-diff($primary, $secondary, 90%, -75%);
+  border-collapse: collapse;
   background: rgba($secondary, .8);
 
   > tbody > tr {
-
-    &.archived a {
-      opacity: 0.6;
-    }
     &.has-excerpt .star {
       vertical-align: top;
       margin-top: 2px;
     }
+    border-bottom: 1px solid dark-light-diff($primary, $secondary, 90%, -75%);
+  }
+
+  > tbody > tr:first-of-type {
+    border-top: 3px solid dark-light-diff($primary, $secondary, 90%, -75%);
   }
 
   th,
@@ -107,7 +107,6 @@
   .category .badge-notification {
     background-color:transparent;
     color: scale-color($primary, $lightness: 50%);
-    position: inherit;
   }
 
   .subcategories .badge {
@@ -226,11 +225,12 @@ ol.category-breadcrumb {
 }
 
 .period-chooser {
-
+  display: inline-block;
   @include unselectable;
 
   h2 {
     float: left;
+    margin: 5px 0 10px;
   }
 
   button {
@@ -274,6 +274,10 @@ ol.category-breadcrumb {
 
 .top-title-buttons {
   display: inline;
+
+  button {
+    margin-right: 0.5em;
+  }
 }
 
 div.education {

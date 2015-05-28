@@ -33,6 +33,7 @@ td.flaggers td {
   margin-bottom: 50px;
   .admin-contents {
     padding: 8px;
+    @include clearfix();
   }
 
   .view-options {
@@ -798,14 +799,14 @@ table.api-keys {
       }
 
       &.trending-up {
-        color: $success;
         i.up {
+          color: $success;
           display: inline;
         }
       }
       &.trending-down {
-        color: $danger;
         i.down {
+          color: $danger;
           display: inline;
         }
       }

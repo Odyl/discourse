@@ -70,6 +70,10 @@ class TopicQuery
     create_list(:latest, {}, latest_results)
   end
 
+  def list_search
+    create_list(:latest, {}, latest_results)
+  end
+
   def list_read
     create_list(:read, unordered: true) do |topics|
       topics.order('COALESCE(tu.last_visited_at, topics.bumped_at) DESC')
@@ -105,6 +109,7 @@ class TopicQuery
   end
 
   def list_topics_by(user)
+    @options[:filtered_to_user] = user.id
     create_list(:user_topics) do |topics|
       topics.where(user_id: user.id)
     end
@@ -132,7 +137,6 @@ class TopicQuery
     pinned_ids = query.where('pinned_at IS NOT NULL AND category_id = ?', category.id)
                       .order('pinned_at DESC').pluck(:id)
     non_pinned_ids = query.where('pinned_at IS NULL OR category_id <> ?', category.id).pluck(:id)
-
     (pinned_ids + non_pinned_ids)[0...@options[:per_page]]
   end
 
@@ -188,7 +192,7 @@ class TopicQuery
     end
 
     topics = topics.to_a.each do |t|
-      t.allowed_user_ids = filter == :private_messags ? t.allowed_users.map{|u| u.id} : []
+      t.allowed_user_ids = filter == :private_messages ? t.allowed_users.map{|u| u.id} : []
     end
 
     list = TopicList.new(filter, @user, topics.to_a, options.merge(@options))
@@ -281,6 +285,10 @@ class TopicQuery
       options.reverse_merge!(@options)
       options.reverse_merge!(per_page: per_page_setting)
 
+      # Whether to return visible topics
+      options[:visible] = true if @user.nil? || @user.regular?
+      options[:visible] = false if @user && @user.id == options[:filtered_to_user]
+
       # Start with a list of all topics
       result = Topic.unscoped
 
@@ -310,7 +318,8 @@ class TopicQuery
       end
 
       result = result.limit(options[:per_page]) unless options[:limit] == false
-      result = result.visible if options[:visible] || @user.nil? || @user.regular?
+
+      result = result.visible if options[:visible]
       result = result.where.not(topics: {id: options[:except_topic_ids]}).references(:topics) if options[:except_topic_ids]
       result = result.offset(options[:page].to_i * options[:per_page]) if options[:page]
 

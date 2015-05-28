@@ -14,7 +14,7 @@ module Jobs
   end
 
   def self.num_email_retry_jobs
-    Sidekiq::RetrySet.new.select { |job| job.klass =~ /Email$/ }.size
+    Sidekiq::RetrySet.new.count { |job| job.klass =~ /Email$/ }
   end
 
   class Base
@@ -186,7 +186,7 @@ module Jobs
 
   end
 
-  class HandledExceptionWrapper < Exception
+  class HandledExceptionWrapper < StandardError
     attr_accessor :wrapped
     def initialize(ex)
       super("Wrapped #{ex.class}: #{ex.message}")

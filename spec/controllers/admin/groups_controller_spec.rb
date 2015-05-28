@@ -21,14 +21,15 @@ describe Admin::GroupsController do
       expect(response.status).to eq(200)
       expect(::JSON.parse(response.body).keep_if {|r| r["id"] == group.id }).to eq([{
         "id"=>group.id,
-        "automatic"=>false,
         "name"=>group.name,
         "user_count"=>1,
         "automatic"=>false,
         "alias_level"=>0,
         "visible"=>true,
         "automatic_membership_email_domains"=>nil,
-        "automatic_membership_retroactive"=>false
+        "automatic_membership_retroactive"=>false,
+        "title"=>nil,
+        "primary_group"=>false
       }])
     end
 
@@ -62,13 +63,15 @@ describe Admin::GroupsController do
 
     it "doesn't launch the 'automatic group membership' job when it's not retroactive" do
       Jobs.expects(:enqueue).never
-      xhr :put, :update, id: 1, automatic_membership_retroactive: "false"
+      group = Fabricate(:group)
+      xhr :put, :update, id: group.id, automatic_membership_retroactive: "false"
       expect(response).to be_success
     end
 
     it "launches the 'automatic group membership' job when it's retroactive" do
-      Jobs.expects(:enqueue).with(:automatic_group_membership, group_id: 1)
-      xhr :put, :update, id: 1, automatic_membership_retroactive: "true"
+      group = Fabricate(:group)
+      Jobs.expects(:enqueue).with(:automatic_group_membership, group_id: group.id)
+      xhr :put, :update, id: group.id, automatic_membership_retroactive: "true"
       expect(response).to be_success
     end
 
@@ -131,6 +134,16 @@ describe Admin::GroupsController do
         group.reload
         expect(group.users.count).to eq(2)
       end
+    end
+
+    it "returns 422 if member already exists" do
+      group = Fabricate(:group)
+      existing_member = Fabricate(:user)
+      group.add(existing_member)
+      group.save
+
+      xhr :put, :add_members, id: group.id, usernames: existing_member.username
+      expect(response.status).to eq(422)
     end
 
   end

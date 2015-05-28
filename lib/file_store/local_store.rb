@@ -5,12 +5,12 @@ module FileStore
   class LocalStore < BaseStore
 
     def store_upload(file, upload, content_type = nil)
-      path = get_path_for_upload(file, upload)
+      path = get_path_for_upload(upload)
       store_file(file, path)
     end
 
     def store_optimized_image(file, optimized_image)
-      path = get_path_for_optimized_image(file, optimized_image)
+      path = get_path_for_optimized_image(optimized_image)
       store_file(file, path)
     end
 
@@ -51,44 +51,14 @@ module FileStore
       "#{public_dir}#{upload.url}"
     end
 
-    def avatar_template(avatar)
-      relative_avatar_template(avatar)
-    end
-
     def purge_tombstone(grace_period)
       `find #{tombstone_dir} -mtime +#{grace_period} -type f -delete`
     end
 
     private
 
-    def get_path_for_upload(file, upload)
-      unique_sha1 = Digest::SHA1.hexdigest("#{Time.now}#{upload.original_filename}")[0..15]
-      extension = File.extname(upload.original_filename)
-      clean_name = "#{unique_sha1}#{extension}"
-      # path
-      "#{relative_base_url}/#{upload.id}/#{clean_name}"
-    end
-
-    def get_path_for_optimized_image(file, optimized_image)
-      # 1234567890ABCDEF_100x200.jpg
-      filename = [
-        optimized_image.sha1[6..15],
-        "_#{optimized_image.width}x#{optimized_image.height}",
-        optimized_image.extension,
-      ].join
-      # path
-      "#{relative_base_url}/_optimized/#{optimized_image.sha1[0..2]}/#{optimized_image.sha1[3..5]}/#{filename}"
-    end
-
-    def relative_avatar_template(avatar)
-      File.join(
-        relative_base_url,
-        "avatars",
-        avatar.sha1[0..2],
-        avatar.sha1[3..5],
-        avatar.sha1[6..15],
-        "{size}#{avatar.extension}"
-      )
+    def get_path_for(type, upload_id, sha, extension)
+      "#{relative_base_url}/#{super(type, upload_id, sha, extension)}"
     end
 
     def store_file(file, path)

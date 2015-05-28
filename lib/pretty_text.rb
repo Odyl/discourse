@@ -12,11 +12,11 @@ module PrettyText
     def t(key, opts)
       key = "js." + key
       unless opts
-        return I18n.t(key)
+        I18n.t(key)
       else
         str = I18n.t(key, Hash[opts.entries].symbolize_keys).dup
-        opts.each {|k,v| str.gsub!("{{#{k.to_s}}}", v.to_s) }
-        return str
+        opts.each { |k,v| str.gsub!("{{#{k.to_s}}}", v.to_s) }
+        str
       end
     end
 
@@ -25,7 +25,6 @@ module PrettyText
       return "" unless username
       user = User.find_by(username_lower: username.downcase)
       return "" unless user.present?
-
 
       # TODO: Add support for ES6 and call `avatar-template` directly
       if !user.uploaded_avatar_id && SiteSetting.default_avatars.present?
@@ -115,13 +114,6 @@ module PrettyText
       end
     end
 
-    ctx['quoteTemplate'] = File.read("#{app_root}/app/assets/javascripts/discourse/templates/quote.hbs")
-    ctx['quoteEmailTemplate'] = File.read("#{app_root}/lib/assets/quote_email.hbs")
-    ctx.eval("HANDLEBARS_TEMPLATES = {
-      'quote': Handlebars.compile(quoteTemplate),
-      'quote_email': Handlebars.compile(quoteEmailTemplate),
-     };")
-
     ctx
   end
 
@@ -147,7 +139,6 @@ module PrettyText
     context.eval("Discourse.SiteSettings = #{SiteSetting.client_settings_json};")
     context.eval("Discourse.CDN = '#{Rails.configuration.action_controller.asset_host}';")
     context.eval("Discourse.BaseUrl = 'http://#{RailsMultisite::ConnectionManagement.current_hostname}';")
-
     context.eval("Discourse.getURL = function(url) { return '#{Discourse::base_uri}' + url };")
     context.eval("Discourse.getURLWithCDN = function(url) { url = Discourse.getURL(url); if (Discourse.CDN) { url = Discourse.CDN + url; } return url; };")
   end
@@ -166,7 +157,6 @@ module PrettyText
       context_opts = opts || {}
       context_opts[:sanitize] ||= true
       context['opts'] = context_opts
-
       context['raw'] = text
 
       if Post.white_listed_image_classes.present?
@@ -212,22 +202,39 @@ module PrettyText
   end
 
   def self.cook(text, opts={})
-    cloned = opts.dup
+    options = opts.dup
+
     # we have a minor inconsistency
-    cloned[:topicId] = opts[:topic_id]
-    sanitized = markdown(text.dup, cloned)
-    sanitized = add_rel_nofollow_to_user_content(sanitized) if !cloned[:omit_nofollow] && SiteSetting.add_rel_nofollow_to_user_content
-    sanitized
+    options[:topicId] = opts[:topic_id]
+
+    sanitized = markdown(text.dup, options)
+
+    doc = Nokogiri::HTML.fragment(sanitized)
+
+    if !options[:omit_nofollow] && SiteSetting.add_rel_nofollow_to_user_content
+      add_rel_nofollow_to_user_content(doc)
+    end
+
+    if SiteSetting.s3_cdn_url.present? && SiteSetting.enable_s3_uploads
+      add_s3_cdn(doc)
+    end
+
+    doc.to_html
   end
 
-  def self.add_rel_nofollow_to_user_content(html)
+  def self.add_s3_cdn(doc)
+    doc.css("img").each do |img|
+      img["src"] = img["src"].sub(Discourse.store.absolute_base_url, SiteSetting.s3_cdn_url)
+    end
+  end
+
+  def self.add_rel_nofollow_to_user_content(doc)
     whitelist = []
 
     domains = SiteSetting.exclude_rel_nofollow_domains
     whitelist = domains.split('|') if domains.present?
 
     site_uri = nil
-    doc = Nokogiri::HTML.fragment(html)
     doc.css("a").each do |l|
       href = l["href"].to_s
       begin
@@ -235,8 +242,9 @@ module PrettyText
         site_uri ||= URI(Discourse.base_url)
 
         if !uri.host.present? ||
-           uri.host.ends_with?(site_uri.host) ||
-           whitelist.any?{|u| uri.host.ends_with?(u)}
+           uri.host == site_uri.host ||
+           uri.host.ends_with?("." << site_uri.host) ||
+           whitelist.any?{|u| uri.host == u || uri.host.ends_with?("." << u)}
           # we are good no need for nofollow
         else
           l["rel"] = "nofollow"
@@ -246,7 +254,6 @@ module PrettyText
         l["rel"] = "nofollow"
       end
     end
-    doc.to_html
   end
 
   class DetectedLink

@@ -1,6 +1,6 @@
-import DiscourseController from 'discourse/controllers/controller';
+import Presence from 'discourse/mixins/presence';
 
-export default DiscourseController.extend({
+export default Ember.ObjectController.extend(Presence, {
   needs: ['modal', 'topic', 'composer-messages', 'application'],
 
   replyAsNewTopicDraft: Em.computed.equal('model.draftKey', Discourse.Composer.REPLY_AS_NEW_TOPIC_KEY),
@@ -10,6 +10,14 @@ export default DiscourseController.extend({
   editReason: null,
   maxTitleLength: Discourse.computed.setting('max_topic_title_length'),
   scopedCategoryId: null,
+  similarTopics: null,
+  similarTopicsMessage: null,
+  lastSimilaritySearch: null,
+
+  topic: null,
+
+  // TODO: Remove this, very bad
+  view: null,
 
   _initializeSimilar: function() {
     this.set('similarTopics', []);
@@ -61,8 +69,9 @@ export default DiscourseController.extend({
       if (postId) {
         this.set('model.loading', true);
         const composer = this;
-        return Discourse.Post.load(postId).then(function(post) {
-          const quote = Discourse.Quote.build(post, post.get("raw"));
+
+        return this.store.find('post', postId).then(function(post) {
+          const quote = Discourse.Quote.build(post, post.get("raw"), {raw: true, full: true});
           composer.appendBlockAtCursor(quote);
           composer.set('model.loading', false);
         });
@@ -82,6 +91,13 @@ export default DiscourseController.extend({
     },
 
     hitEsc() {
+
+      const messages = this.get('controllers.composer-messages.model');
+      if (messages.length) {
+        messages.popObject();
+        return;
+      }
+
       if (this.get('model.viewOpen')) {
         this.shrink();
       }
@@ -175,8 +191,9 @@ export default DiscourseController.extend({
     // for now handle a very narrow use case
     // if we are replying to a topic AND not on the topic pop the window up
     if (!force && composer.get('replyingToTopic')) {
-      const topic = this.get('topic');
-      if (!topic || topic.get('id') !== composer.get('topic.id'))
+
+      const currentTopic = this.get('controllers.topic.model');
+      if (!currentTopic || currentTopic.get('id') !== composer.get('topic.id'))
       {
         const message = I18n.t("composer.posting_not_on_topic");
 
@@ -186,12 +203,12 @@ export default DiscourseController.extend({
           "link": true
         }];
 
-        if (topic) {
+        if (currentTopic) {
           buttons.push({
-            "label": I18n.t("composer.reply_here") + "<br/><div class='topic-title overflow-ellipsis'>" + Handlebars.Utils.escapeExpression(topic.get('title')) + "</div>",
+            "label": I18n.t("composer.reply_here") + "<br/><div class='topic-title overflow-ellipsis'>" + Handlebars.Utils.escapeExpression(currentTopic.get('title')) + "</div>",
             "class": "btn btn-reply-here",
             "callback": function() {
-              composer.set('topic', topic);
+              composer.set('topic', currentTopic);
               composer.set('post', null);
               self.save(true);
             }
@@ -211,19 +228,25 @@ export default DiscourseController.extend({
       }
     }
 
-    var staged = false,
-        disableJumpReply = Discourse.User.currentProp('disable_jump_reply');
-    var promise = composer.save({
+    var staged = false;
+    const disableJumpReply = Discourse.User.currentProp('disable_jump_reply');
+
+    const promise = composer.save({
       imageSizes: this.get('view').imageSizes(),
       editReason: this.get("editReason")
-    }).then(function(opts) {
+    }).then(function(result) {
+      if (result.responseJson.action === "enqueued") {
+        self.send('postWasEnqueued', result.responseJson);
+        self.destroyDraft();
+        self.close();
+        return result;
+      }
 
       // If we replied as a new topic successfully, remove the draft.
       if (self.get('replyAsNewTopicDraft')) {
         self.destroyDraft();
       }
 
-      opts = opts || {};
       self.close();
 
       const currentUser = Discourse.User.current();
@@ -236,25 +259,25 @@ export default DiscourseController.extend({
       // TODO disableJumpReply is super crude, it needs to provide some sort
       // of notification to the end user
       if (!composer.get('replyingToTopic') || !disableJumpReply) {
-        if (opts.post && !staged) {
-          Discourse.URL.routeTo(opts.post.get('url'));
+        const post = result.target;
+        if (post && !staged) {
+          Discourse.URL.routeTo(post.get('url'));
         }
       }
-    }, function(error) {
+    }).catch(function(error) {
       composer.set('disableDrafts', false);
-      bootbox.alert(error);
+      self.appEvents.one('composer:opened', () => bootbox.alert(error));
     });
 
-
-    if ( this.get('controllers.application.currentRouteName').split('.')[0] === 'topic' &&
-         composer.get('topic.id') === this.get('controllers.topic.model.id') ) {
+    if (this.get('controllers.application.currentRouteName').split('.')[0] === 'topic' &&
+        composer.get('topic.id') === this.get('controllers.topic.model.id')) {
       staged = composer.get('stagedPost');
     }
 
     Em.run.schedule('afterRender', function() {
       if (staged && !disableJumpReply) {
-        var postNumber = staged.get('post_number');
-        Discourse.URL.jumpToPost(postNumber, {skipIfOnScreen: true});
+        const postNumber = staged.get('post_number');
+        Discourse.URL.jumpToPost(postNumber, { skipIfOnScreen: true });
         self.appEvents.trigger('post:highlight', postNumber);
       }
     });
@@ -267,26 +290,18 @@ export default DiscourseController.extend({
     return promise;
   },
 
-  /**
-    Checks to see if a reply has been typed. This is signaled by a keyUp
-    event in a view.
-
-    @method checkReplyLength
-  **/
+  // Checks to see if a reply has been typed.
+  // This is signaled by a keyUp event in a view.
   checkReplyLength() {
-    if (this.present('model.reply')) {
+    if (!Ember.isEmpty('model.reply')) {
       // Notify the composer messages controller that a reply has been typed. Some
       // messages only appear after typing.
       this.get('controllers.composer-messages').typedReply();
     }
   },
 
-  /**
-    Fired after a user stops typing. Considers whether to check for similar
-    topics based on the current composer state.
-
-    @method findSimilarTopics
-  **/
+  // Fired after a user stops typing.
+  // Considers whether to check for similar topics based on the current composer state.
   findSimilarTopics() {
     // We don't care about similar topics unless creating a topic
     if (!this.get('model.creatingTopic')) { return; }
@@ -356,7 +371,7 @@ export default DiscourseController.extend({
 
     // If we show the subcategory list, scope the categories drop down to
     // the category we opened the composer with.
-    if (Discourse.SiteSettings.show_subcategory_list) {
+    if (this.siteSettings.show_subcategory_list && opts.draftKey !== 'reply_as_new_topic') {
       this.set('scopedCategoryId', opts.categoryId);
     }
 
@@ -420,7 +435,7 @@ export default DiscourseController.extend({
         composerModel.set('topic', opts.topic);
       }
     } else {
-      composerModel = composerModel || Discourse.Composer.create();
+      composerModel = composerModel || this.store.createRecord('composer');
       composerModel.open(opts);
     }
 
@@ -428,12 +443,41 @@ export default DiscourseController.extend({
     composerModel.set('composeState', Discourse.Composer.OPEN);
     composerModel.set('isWarning', false);
 
+    if (opts.topicTitle && opts.topicTitle.length <= this.get('maxTitleLength')) {
+      this.set('model.title', opts.topicTitle);
+    }
+
+    if (opts.topicCategoryId) {
+      this.set('model.categoryId', opts.topicCategoryId);
+    } else if (opts.topicCategory) {
+      const splitCategory = opts.topicCategory.split("/");
+      let category;
+
+      if (!splitCategory[1]) {
+        category = this.site.get('categories').findProperty('nameLower', splitCategory[0].toLowerCase());
+      } else {
+        const categories = Discourse.Category.list();
+        const mainCategory = categories.findProperty('nameLower', splitCategory[0].toLowerCase());
+        category = categories.find(function(item) {
+          return item && item.get('nameLower') === splitCategory[1].toLowerCase() && item.get('parent_category_id') === mainCategory.id;
+        });
+      }
+
+      if (category) {
+        this.set('model.categoryId', category.get('id'));
+      }
+    }
+
+    if (opts.topicBody) {
+      this.set('model.reply', opts.topicBody);
+    }
+
     this.get('controllers.composer-messages').queryFor(composerModel);
   },
 
   // View a new reply we've made
   viewNewReply() {
-    Discourse.URL.routeTo(this.get('createdPost.url'));
+    Discourse.URL.routeTo(this.get('model.createdPost.url'));
     this.close();
     return false;
   },

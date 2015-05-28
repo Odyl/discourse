@@ -24,6 +24,8 @@
 
   &.bar { //bar category style
     line-height: 1.25;
+    margin-right: 5px;
+
     span.badge-category {
       color: $primary !important;
       padding: 3px;
@@ -51,7 +53,7 @@
 
   &.bullet { //bullet category style
     line-height: 1;
-    margin-right: 5px;
+    margin-right: 10px;
 
     h3 & {
       line-height: .9;
@@ -63,7 +65,7 @@
       line-height: 1;
       margin-left: 4px;
       padding-left: 2px;
-      display: inline-block;
+      display: inline;
 
       #search-dropdown & {
         margin-top: 0;
@@ -86,8 +88,10 @@
    span {
      &.badge-category-parent-bg { //subcategory style
        width: 5px;
+       line-height: 1;
        & + .badge-category-bg {
          width: 5px;
+         line-height: 1;
        }
      }
    }
@@ -98,6 +102,7 @@
   &.box {  //box category style (apply custom widths to the wrapper, not the children)
     line-height: 1.5;
     margin-top: 5px;
+    margin-right: 5px;
 
     span {
       display: block;
