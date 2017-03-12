@@ -1,87 +1,109 @@
-import ObjectController from 'discourse/controllers/object';
 import CanCheckEmails from 'discourse/mixins/can-check-emails';
+import computed from 'ember-addons/ember-computed-decorators';
+import UserAction from 'discourse/models/user-action';
+import User from 'discourse/models/user';
 
-export default ObjectController.extend(CanCheckEmails, {
+export default Ember.Controller.extend(CanCheckEmails, {
   indexStream: false,
-  pmView: false,
   userActionType: null,
-  needs: ['user-notifications', 'user-topics-list'],
+  application: Ember.inject.controller(),
+  userNotifications: Ember.inject.controller('user-notifications'),
+  currentPath: Ember.computed.alias('application.currentPath'),
 
-  viewingSelf: function() {
-    return this.get('content.username') === Discourse.User.currentProp('username');
-  }.property('content.username'),
+  @computed("content.username")
+  viewingSelf(username) {
+    return username === User.currentProp('username');
+  },
 
-  collapsedInfo: Em.computed.not('indexStream'),
+  @computed('model.profileBackground')
+  hasProfileBackground(background) {
+    return !Ember.isEmpty(background.toString());
+  },
 
-  websiteName: function() {
-    var website = this.get('model.website');
-    if (Em.isEmpty(website)) { return; }
-    return website.split("/")[2];
-  }.property('model.website'),
+  @computed('indexStream', 'viewingSelf', 'forceExpand')
+  collapsedInfo(indexStream, viewingSelf, forceExpand){
+    return (!indexStream || viewingSelf) && !forceExpand;
+  },
+
+  @computed('model.isSuspended', 'currentUser.staff')
+  isNotSuspendedOrIsStaff(isSuspended, isStaff) {
+    return !isSuspended || isStaff;
+  },
 
   linkWebsite: Em.computed.not('model.isBasic'),
 
-  removeNoFollow: function() {
-    return this.get('model.trust_level') > 2 && !this.siteSettings.tl3_links_no_follow;
-  }.property('model.trust_level'),
+  @computed("model.trust_level")
+  removeNoFollow(trustLevel) {
+    return trustLevel > 2 && !this.siteSettings.tl3_links_no_follow;
+  },
 
-  canSeePrivateMessages: Ember.computed.or('viewingSelf', 'currentUser.admin'),
-  canSeeNotificationHistory: Em.computed.alias('canSeePrivateMessages'),
+  @computed('viewingSelf', 'currentUser.admin')
+  showBookmarks(viewingSelf, isAdmin) {
+    return viewingSelf || isAdmin;
+  },
 
-  showBadges: function() {
-    return Discourse.SiteSettings.enable_badges && (this.get('content.badge_count') > 0);
-  }.property('content.badge_count'),
+  @computed('viewingSelf', 'currentUser.admin')
+  showPrivateMessages(viewingSelf, isAdmin) {
+    return this.siteSettings.enable_private_messages && (viewingSelf || isAdmin);
+  },
 
-  privateMessageView: function() {
-    return (this.get('userActionType') === Discourse.UserAction.TYPES.messages_sent) ||
-           (this.get('userActionType') === Discourse.UserAction.TYPES.messages_received);
-  }.property('userActionType'),
+  @computed('viewingSelf', 'currentUser.staff')
+  showNotificationsTab(viewingSelf, staff) {
+    return viewingSelf || staff;
+  },
 
-  canInviteToForum: function() {
-    return Discourse.User.currentProp('can_invite_to_forum');
-  }.property(),
+  @computed('model.name')
+  nameFirst(name) {
+    return !this.get('siteSettings.prioritize_username_in_ux') && name && name.trim().length > 0;
+  },
 
-  canDeleteUser: function() {
-    return this.get('model.can_be_deleted') && this.get('model.can_delete_all_posts');
-  }.property('model.can_be_deleted', 'model.can_delete_all_posts'),
+  @computed("model.badge_count")
+  showBadges(badgeCount) {
+    return Discourse.SiteSettings.enable_badges && badgeCount > 0;
+  },
 
-  publicUserFields: function() {
-    var siteUserFields = this.site.get('user_fields');
+  @computed("userActionType")
+  privateMessageView(userActionType) {
+    return (userActionType === UserAction.TYPES.messages_sent) ||
+           (userActionType === UserAction.TYPES.messages_received);
+  },
+
+  @computed("indexStream", "userActionType")
+  showActionTypeSummary(indexStream,userActionType, showPMs) {
+    return (indexStream || userActionType) && !showPMs;
+  },
+
+
+  @computed()
+  canInviteToForum() {
+    return User.currentProp('can_invite_to_forum');
+  },
+
+  canDeleteUser: Ember.computed.and("model.can_be_deleted", "model.can_delete_all_posts"),
+
+  @computed('model.user_fields.@each.value')
+  publicUserFields() {
+    const siteUserFields = this.site.get('user_fields');
     if (!Ember.isEmpty(siteUserFields)) {
-      var userFields = this.get('model.user_fields');
-      return siteUserFields.filterProperty('show_on_profile', true).sortBy('id').map(function(uf) {
-        var val = userFields ? userFields[uf.get('id').toString()] : null;
-        if (Ember.isEmpty(val)) {
-          return null;
-        } else {
-          return Ember.Object.create({value: val, field: uf});
-        }
+      const userFields = this.get('model.user_fields');
+      return siteUserFields.filterBy('show_on_profile', true).sortBy('position').map(field => {
+        Ember.set(field, 'dasherized_name', field.get('name').dasherize());
+        const value = userFields ? userFields[field.get('id').toString()] : null;
+        return Ember.isEmpty(value) ? null : Ember.Object.create({ value, field });
       }).compact();
     }
-  }.property('model.user_fields.@each.value'),
-
-  privateMessagesActive: Em.computed.equal('pmView', 'index'),
-  privateMessagesMineActive: Em.computed.equal('pmView', 'mine'),
-  privateMessagesUnreadActive: Em.computed.equal('pmView', 'unread'),
+  },
 
   actions: {
-    adminDelete: function() {
-      Discourse.AdminUser.find(this.get('username').toLowerCase()).then(function(user){
-        user.destroy({deletePosts: true});
-      });
+    expandProfile() {
+      this.set('forceExpand', true);
     },
 
-    exportUserArchive: function() {
-      bootbox.confirm(
-        I18n.t("admin.export_csv.user_archive_confirm"),
-        I18n.t("no_value"),
-        I18n.t("yes_value"),
-        function(confirmed) {
-          if (confirmed) {
-            Discourse.ExportCsv.exportUserArchive();
-          }
-        }
-      );
-    }
+    adminDelete() {
+      // I really want this deferred, don't want to bring in all this code till used
+      const AdminUser = require('admin/models/admin-user').default;
+      AdminUser.find(this.get('model.id')).then(user => user.destroy({deletePosts: true}));
+    },
+
   }
 });

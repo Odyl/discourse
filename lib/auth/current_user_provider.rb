@@ -16,8 +16,16 @@ class Auth::CurrentUserProvider
     raise NotImplementedError
   end
 
+  # optional interface to be called to refresh cookies etc if needed
+  def refresh_session(user,session,cookies)
+  end
+
   # api has special rights return true if api was detected
   def is_api?
+    raise NotImplementedError
+  end
+
+  def is_user_api?
     raise NotImplementedError
   end
 

@@ -8,7 +8,7 @@
 %nav {
   margin-left: 0;
   list-style: none;
-  > li > a {
+  li a {
     display: block;
     text-decoration: none;
   }
@@ -50,13 +50,13 @@
   padding: 0;
   overflow: hidden;
   background: dark-light-diff($primary, $secondary, 90%, -75%);
-  > li {
+  li {
     border-bottom: 1px solid dark-light-diff($primary, $secondary, 80%, -60%);
     position: relative;
     &:last-of-type {
       border-bottom: 0;
     }
-    > a {
+    a {
       margin: 0;
       padding: 13px 13px 13px 30px;
       font-size: 1.143em;
@@ -65,20 +65,19 @@
       color: $primary;
     }
   }
-  .active > a,
+  .active > a, & li > a.active
   {
     color: $secondary;
     background-color: $quaternary;
   }
 
-  .active > a::after,
+  .active > a::after, & li > a.active::after
   {
     left: 90%;
     top: 33%;
-    border: solid transparent;
     content: " ";
     position: absolute;
-    border-width: 8px;
+    border: 8px solid transparent;
     border-left-color: $secondary;
   }
 

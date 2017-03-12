@@ -1,6 +1,8 @@
+import { ajax } from 'discourse/lib/ajax';
 import RestAdapter from 'discourse/adapters/rest';
+import PreloadStore from 'preload-store';
 
-function finderFor(filter, params) {
+export function finderFor(filter, params) {
   return function() {
     let url = Discourse.getURL("/") + filter + ".json";
 
@@ -9,7 +11,7 @@ function finderFor(filter, params) {
           encoded = [];
 
       keys.forEach(function(p) {
-        const value = params[p];
+        const value = encodeURI(params[p]);
         if (typeof value !== 'undefined') {
           encoded.push(p + "=" + value);
         }
@@ -19,7 +21,7 @@ function finderFor(filter, params) {
         url += "?" + encoded.join('&');
       }
     }
-    return Discourse.ajax(url);
+    return ajax(url);
   };
 }
 

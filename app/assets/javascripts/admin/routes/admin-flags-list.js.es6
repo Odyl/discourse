@@ -1,9 +1,10 @@
 import showModal from 'discourse/lib/show-modal';
+import FlaggedPost from 'admin/models/flagged-post';
 
 export default Discourse.Route.extend({
   model(params) {
     this.filter = params.filter;
-    return Discourse.FlaggedPost.findAll(params.filter);
+    return FlaggedPost.findAll(params.filter);
   },
 
   setupController(controller, model) {
@@ -13,12 +14,12 @@ export default Discourse.Route.extend({
 
   actions: {
     showAgreeFlagModal(model) {
-      showModal('modals/admin-agree-flag', { model });
+      showModal('admin-agree-flag', { model, admin: true });
       this.controllerFor('modal').set('modalClass', 'agree-flag-modal');
     },
 
     showDeleteFlagModal(model) {
-      showModal('modals/admin-delete-flag', { model });
+      showModal('admin-delete-flag', { model, admin: true });
       this.controllerFor('modal').set('modalClass', 'delete-flag-modal');
     }
 

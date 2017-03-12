@@ -1,4 +1,5 @@
 import showModal from 'discourse/lib/show-modal';
+import Group from 'discourse/models/group';
 
 export default Discourse.Route.extend({
   model() {
@@ -8,7 +9,7 @@ export default Discourse.Route.extend({
   afterModel(model) {
     if (this.currentUser.get('admin')) {
       const self = this;
-      return Discourse.Group.findAll().then(function(groups){
+      return Group.findAll().then(function(groups){
         self._availableGroups = groups.filterBy('automatic', false);
         return model;
       });
@@ -25,8 +26,16 @@ export default Discourse.Route.extend({
 
   actions: {
     showSuspendModal(model) {
-      showModal('modals/admin-suspend-user', { model });
+      showModal('admin-suspend-user', { model, admin: true });
       this.controllerFor('modal').set('modalClass', 'suspend-user-modal');
+    },
+
+    viewActionLogs(username) {
+      const controller = this.controllerFor('adminLogs.staffActionLogs');
+      this.transitionTo('adminLogs.staffActionLogs').then(() => {
+        controller.set('filters', Ember.Object.create());
+        controller._changeFilters({ target_user: username });
+      });
     }
   }
 });

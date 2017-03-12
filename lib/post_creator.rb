@@ -28,8 +28,14 @@ class PostCreator
   #   cook_method             - Method of cooking the post.
   #                               :regular - Pass through Markdown parser and strip bad HTML
   #                               :raw_html - Perform no processing
+  #                               :raw_email - Imported from an email
   #   via_email               - Mark this post as arriving via email
   #   raw_email               - Full text of arriving email (to store)
+  #   action_code             - Describes a small_action post (optional)
+  #   skip_jobs               - Don't enqueue jobs when creation succeeds. This is needed if you
+  #                             wrap `PostCreator` in a transaction, as the sidekiq jobs could
+  #                             dequeue before the commit finishes. If you do this, be sure to
+  #                             call `enqueue_jobs` after the transaction is comitted.
   #
   #   When replying to a topic:
   #     topic_id              - topic we're replying to
@@ -52,7 +58,16 @@ class PostCreator
     # If we don't do this we introduce a rather risky dependency
     @user = user
     @opts = opts || {}
+    opts[:title] = pg_clean_up(opts[:title]) if opts[:title] && opts[:title].include?("\u0000")
+    opts[:raw] = pg_clean_up(opts[:raw]) if opts[:raw] && opts[:raw].include?("\u0000")
+    opts.delete(:reply_to_post_number) unless opts[:topic_id]
+    @guardian = opts[:guardian] if opts[:guardian]
+
     @spam = false
+  end
+
+  def pg_clean_up(str)
+    str.gsub("\u0000", "")
   end
 
   # True if the post was considered spam
@@ -77,6 +92,17 @@ class PostCreator
       return false
     end
 
+    # Make sure none of the users have muted the creator
+    names = @opts[:target_usernames]
+    if names.present? && !skip_validations? && !@user.staff?
+      users = User.where(username: names.split(',').flatten).pluck(:id, :username).to_h
+
+      MutedUser.where(user_id: users.keys, muted_user_id: @user.id).pluck(:user_id).each do |m|
+        errors[:base] << I18n.t(:not_accepting_pms, username: users[m])
+      end
+      return false if errors[:base].present?
+    end
+
     if new_topic?
       topic_creator = TopicCreator.new(@user, guardian, @opts)
       return false unless skip_validations? || validate_child(topic_creator)
@@ -91,6 +117,7 @@ class PostCreator
     setup_post
 
     return true if skip_validations?
+
     if @post.has_host_spam?
       @spam = true
       errors[:base] << I18n.t(:spamming_host)
@@ -111,6 +138,7 @@ class PostCreator
   def create
     if valid?
       transaction do
+        build_post_stats
         create_topic
         save_post
         extract_links
@@ -122,19 +150,25 @@ class PostCreator
         create_embedded_topic
 
         ensure_in_allowed_users if guardian.is_staff?
+        unarchive_message
         @post.advance_draft_sequence
         @post.save_reply_relationships
       end
     end
 
     if @post && errors.blank?
+      # update counters etc.
+      @post.topic.reload
+
       publish
 
       track_latest_on_category
-      enqueue_jobs
+      enqueue_jobs unless @opts[:skip_jobs]
       BadgeGranter.queue_badge_grant(Badge::Trigger::PostRevision, post: @post)
 
       trigger_after_events(@post)
+
+      auto_close unless @opts[:import_mode]
     end
 
     if @post || @spam
@@ -144,35 +178,109 @@ class PostCreator
     @post
   end
 
+  def create!
+    create
+
+    if !self.errors.full_messages.empty?
+      raise ActiveRecord::RecordNotSaved.new("Failed to create post", self)
+    end
+
+    @post
+  end
+
+  def enqueue_jobs
+    return unless @post && !@post.errors.present?
+    PostJobsEnqueuer.new(@post, @topic, new_topic?, {import_mode: @opts[:import_mode]}).enqueue_jobs
+  end
+
+  def self.track_post_stats
+    Rails.env != "test".freeze || @track_post_stats
+  end
+
+  def self.track_post_stats=(val)
+    @track_post_stats = val
+  end
+
   def self.create(user, opts)
     PostCreator.new(user, opts).create
   end
 
-  def self.before_create_tasks(post)
-    set_reply_user_id(post)
+  def self.create!(user, opts)
+    PostCreator.new(user, opts).create!
+  end
 
-    post.word_count = post.raw.scan(/\w+/).size
-    post.post_number ||= Topic.next_post_number(post.topic_id, post.reply_to_post_number.present?)
+  def self.before_create_tasks(post)
+    set_reply_info(post)
+
+    post.word_count = post.raw.scan(/[[:word:]]+/).size
+
+    whisper = post.post_type == Post.types[:whisper]
+    post.post_number ||= Topic.next_post_number(post.topic_id, post.reply_to_post_number.present?, whisper)
 
     cooking_options = post.cooking_options || {}
     cooking_options[:topic_id] = post.topic_id
 
-    post.cooked ||= post.cook(post.raw, cooking_options)
+    post.cooked ||= post.cook(post.raw, cooking_options.symbolize_keys)
     post.sort_order = post.post_number
     post.last_version_at ||= Time.now
   end
 
-  def self.set_reply_user_id(post)
+  def self.set_reply_info(post)
     return unless post.reply_to_post_number.present?
 
-    post.reply_to_user_id ||= Post.select(:user_id).find_by(topic_id: post.topic_id, post_number: post.reply_to_post_number).try(:user_id)
+    reply_info = Post.where(topic_id: post.topic_id, post_number: post.reply_to_post_number)
+                     .select(:user_id, :post_type)
+                     .first
+
+    if reply_info.present?
+      post.reply_to_user_id ||= reply_info.user_id
+      whisper_type = Post.types[:whisper]
+      post.post_type = whisper_type if reply_info.post_type == whisper_type
+    end
   end
 
   protected
 
+  def build_post_stats
+    if PostCreator.track_post_stats
+      draft_key = @topic ? "topic_#{@topic.id}" : "new_topic"
+
+      sequence = DraftSequence.current(@user, draft_key)
+      revisions = Draft.where(sequence: sequence,
+                              user_id: @user.id,
+                              draft_key: draft_key).pluck(:revisions).first || 0
+
+      @post.build_post_stat(
+        drafts_saved: revisions,
+        typing_duration_msecs: @opts[:typing_duration_msecs] || 0,
+        composer_open_duration_msecs: @opts[:composer_open_duration_msecs] || 0
+      )
+    end
+  end
+
   def trigger_after_events(post)
     DiscourseEvent.trigger(:topic_created, post.topic, @opts, @user) unless @opts[:topic_id]
     DiscourseEvent.trigger(:post_created, post, @opts, @user)
+  end
+
+  def auto_close
+    if @post.topic.private_message? &&
+        !@post.topic.closed &&
+        SiteSetting.auto_close_messages_post_count > 0 &&
+        SiteSetting.auto_close_messages_post_count <= @post.topic.posts_count
+
+      @post.topic.update_status(:closed, true, Discourse.system_user,
+          message: I18n.t('topic_statuses.autoclosed_message_max_posts', count: SiteSetting.auto_close_messages_post_count))
+
+    elsif !@post.topic.private_message? &&
+        !@post.topic.closed &&
+        SiteSetting.auto_close_topics_post_count > 0 &&
+        SiteSetting.auto_close_topics_post_count <= @post.topic.posts_count
+
+      @post.topic.update_status(:closed, true, Discourse.system_user,
+          message: I18n.t('topic_statuses.autoclosed_topic_max_posts', count: SiteSetting.auto_close_topics_post_count))
+
+    end
   end
 
   def transaction(&blk)
@@ -192,7 +300,8 @@ class PostCreator
   # discourse post.
   def create_embedded_topic
     return unless @opts[:embed_url].present?
-    TopicEmbed.create!(topic_id: @post.topic_id, post_id: @post.id, embed_url: @opts[:embed_url])
+    embed = TopicEmbed.new(topic_id: @post.topic_id, post_id: @post.id, embed_url: @opts[:embed_url])
+    rollback_from_errors!(embed) unless embed.save
   end
 
   def handle_spam
@@ -215,14 +324,42 @@ class PostCreator
   end
 
   def ensure_in_allowed_users
-    return unless @topic.private_message?
+    return unless @topic.private_message? && @topic.id
 
     unless @topic.topic_allowed_users.where(user_id: @user.id).exists?
-      @topic.topic_allowed_users.create!(user_id: @user.id)
+      unless @topic.topic_allowed_groups.where('group_id IN (
+                                              SELECT group_id FROM group_users where user_id = ?
+                                           )',@user.id).exists?
+        @topic.topic_allowed_users.create!(user_id: @user.id)
+      end
+    end
+  end
+
+  def unarchive_message
+    return unless @topic.private_message? && @topic.id
+
+    UserArchivedMessage.where(topic_id: @topic.id).pluck(:user_id).each do |user_id|
+      UserArchivedMessage.move_to_inbox!(user_id, @topic.id)
+    end
+
+    GroupArchivedMessage.where(topic_id: @topic.id).pluck(:group_id).each do |group_id|
+      GroupArchivedMessage.move_to_inbox!(group_id, @topic.id)
     end
   end
 
   private
+
+  # TODO: merge the similar function in TopicCreator and fix parameter naming for `category`
+  def find_category_id
+    @opts.delete(:category) if @opts[:archetype].present? && @opts[:archetype] == Archetype.private_message
+
+    category = if (@opts[:category].is_a? Integer) || (@opts[:category] =~ /^\d+$/)
+                 Category.find_by(id: @opts[:category])
+               else
+                 Category.find_by(name_lower: @opts[:category].try(:downcase))
+               end
+    category&.id
+  end
 
   def create_topic
     return if @topic
@@ -230,19 +367,25 @@ class PostCreator
       topic_creator = TopicCreator.new(@user, guardian, @opts)
       @topic = topic_creator.create
     rescue ActiveRecord::Rollback
-      add_errors_from(topic_creator)
-      return
+      rollback_from_errors!(topic_creator)
     end
     @post.topic_id = @topic.id
     @post.topic = @topic
+    if @topic && @topic.category && @topic.category.all_topics_wiki
+      @post.wiki = true
+    end
   end
 
   def update_topic_stats
-    # Update attributes on the topic - featured users and last posted.
-    attrs = {last_posted_at: @post.created_at, last_post_user_id: @post.user_id}
-    attrs[:bumped_at] = @post.created_at unless @post.no_bump
-    attrs[:word_count] = (@topic.word_count || 0) + @post.word_count
+    return if @post.post_type == Post.types[:whisper]
+
+    attrs = {
+      last_posted_at: @post.created_at,
+      last_post_user_id: @post.user_id,
+      word_count: (@topic.word_count || 0) + @post.word_count,
+    }
     attrs[:excerpt] = @post.excerpt(220, strip_links: true) if new_topic?
+    attrs[:bumped_at] = @post.created_at unless @post.no_bump
     @topic.update_attributes(attrs)
   end
 
@@ -253,7 +396,7 @@ class PostCreator
   end
 
   def setup_post
-    @opts[:raw] = TextCleaner.normalize_whitespaces(@opts[:raw]).gsub(/\s+\z/, "")
+    @opts[:raw] = TextCleaner.normalize_whitespaces(@opts[:raw] || '').gsub(/\s+\z/, "")
 
     post = Post.new(raw: @opts[:raw],
                     topic_id: @topic.try(:id),
@@ -261,7 +404,7 @@ class PostCreator
                     reply_to_post_number: @opts[:reply_to_post_number])
 
     # Attributes we pass through to the post instance if present
-    [:post_type, :no_bump, :cooking_options, :image_sizes, :acting_user, :invalidate_oneboxes, :cook_method, :via_email, :raw_email].each do |a|
+    [:post_type, :no_bump, :cooking_options, :image_sizes, :acting_user, :invalidate_oneboxes, :cook_method, :via_email, :raw_email, :action_code].each do |a|
       post.send("#{a}=", @opts[a]) if @opts[a].present?
     end
 
@@ -286,14 +429,18 @@ class PostCreator
   end
 
   def update_user_counts
+    return if @opts[:import_mode]
+
     @user.create_user_stat if @user.user_stat.nil?
 
     if @user.user_stat.first_post_created_at.nil?
       @user.user_stat.first_post_created_at = @post.created_at
     end
 
-    @user.user_stat.post_count += 1
-    @user.user_stat.topic_count += 1 if @post.is_first_post?
+    unless @post.topic.private_message?
+      @user.user_stat.post_count += 1
+      @user.user_stat.topic_count += 1 if @post.is_first_post?
+    end
 
     # We don't count replies to your own topics
     if !@opts[:import_mode] && @user.id != @topic.user_id
@@ -302,8 +449,7 @@ class PostCreator
 
     @user.user_stat.save!
 
-    @user.last_posted_at = @post.created_at
-    @user.save!
+    @user.update_attributes(last_posted_at: @post.created_at)
   end
 
   def publish
@@ -321,26 +467,28 @@ class PostCreator
   def track_topic
     return if @opts[:auto_track] == false
 
-    TopicUser.change(@post.user_id,
-                     @topic.id,
-                     posted: true,
-                     last_read_post_number: @post.post_number,
-                     highest_seen_post_number: @post.post_number)
+    unless @user.user_option.disable_jump_reply?
+      TopicUser.change(@post.user_id,
+                       @topic.id,
+                       posted: true,
+                       last_read_post_number: @post.post_number,
+                       highest_seen_post_number: @post.post_number)
 
 
-    # assume it took us 5 seconds of reading time to make a post
-    PostTiming.record_timing(topic_id: @post.topic_id,
-                             user_id: @post.user_id,
-                             post_number: @post.post_number,
-                             msecs: 5000)
+      # assume it took us 5 seconds of reading time to make a post
+      PostTiming.record_timing(topic_id: @post.topic_id,
+                               user_id: @post.user_id,
+                               post_number: @post.post_number,
+                               msecs: 5000)
+    end
 
-
-    TopicUser.auto_track(@user.id, @topic.id, TopicUser.notification_reasons[:created_post])
-  end
-
-  def enqueue_jobs
-    return unless @post && !@post.errors.present?
-    PostJobsEnqueuer.new(@post, @topic, new_topic?, {import_mode: @opts[:import_mode]}).enqueue_jobs
+    if @user.staged
+      TopicUser.auto_notification_for_staging(@user.id, @topic.id, TopicUser.notification_reasons[:auto_watch])
+    elsif @user.user_option.notification_level_when_replying === NotificationLevels.topic_levels[:watching]
+      TopicUser.auto_notification(@user.id, @topic.id, TopicUser.notification_reasons[:created_post], NotificationLevels.topic_levels[:watching])
+    else
+      TopicUser.auto_notification(@user.id, @topic.id, TopicUser.notification_reasons[:created_post], NotificationLevels.topic_levels[:tracking])
+    end
   end
 
   def new_topic?

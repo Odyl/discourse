@@ -35,8 +35,16 @@ class DirectoryItemsController < ApplicationController
       end
     end
 
-    result = result.order('users.username')
-    result_count = result.dup.count
+    if params[:username]
+      user_id = User.where(username_lower: params[:username].to_s.downcase).pluck(:id).first
+      if user_id
+        result = result.where(user_id: user_id)
+      else
+        result = result.where('false')
+      end
+    end
+
+    result_count = result.count
     result = result.limit(PAGE_SIZE).offset(PAGE_SIZE * page).to_a
 
     more_params = params.slice(:period, :order, :asc)

@@ -11,6 +11,7 @@ class DraftSequence < ActiveRecord::Base
     c.sequence ||= 0
     c.sequence += 1
     c.save
+    exec_sql("DELETE FROM drafts WHERE user_id = :user_id AND draft_key = :draft_key AND sequence < :sequence", draft_key: key, user_id: user_id, sequence: c.sequence)
     c.sequence
   end
 
@@ -33,7 +34,7 @@ end
 #
 #  id        :integer          not null, primary key
 #  user_id   :integer          not null
-#  draft_key :string(255)      not null
+#  draft_key :string           not null
 #  sequence  :integer          not null
 #
 # Indexes

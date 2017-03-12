@@ -1,12 +1,12 @@
 # encoding: utf-8
-require 'spec_helper'
+require 'rails_helper'
 require 'composer_messages_finder'
 
 describe ComposerMessagesFinder do
 
   context "delegates work" do
     let(:user) { Fabricate.build(:user) }
-    let(:finder) { ComposerMessagesFinder.new(user, composerAction: 'createTopic') }
+    let(:finder) { ComposerMessagesFinder.new(user, composer_action: 'createTopic') }
 
     it "calls all the message finders" do
       finder.expects(:check_education_message).once
@@ -15,6 +15,7 @@ describe ComposerMessagesFinder do
       finder.expects(:check_sequential_replies).once
       finder.expects(:check_dominating_topic).once
       finder.expects(:check_reviving_old_topic).once
+      finder.expects(:check_get_a_room).once
       finder.find
     end
 
@@ -24,7 +25,7 @@ describe ComposerMessagesFinder do
     let(:user) { Fabricate.build(:user) }
 
     context 'creating topic' do
-      let(:finder) { ComposerMessagesFinder.new(user, composerAction: 'createTopic') }
+      let(:finder) { ComposerMessagesFinder.new(user, composer_action: 'createTopic') }
 
       before do
         SiteSetting.stubs(:educate_until_posts).returns(10)
@@ -41,8 +42,28 @@ describe ComposerMessagesFinder do
       end
     end
 
+    context 'private message' do
+      let(:topic) { Fabricate(:private_message_topic) }
+
+      context 'starting a new private message' do
+        let(:finder) { ComposerMessagesFinder.new(user, composer_action: 'createTopic', topic_id: topic.id) }
+
+        it 'should return an empty string' do
+          expect(finder.check_education_message).to eq(nil)
+        end
+      end
+
+      context 'replying to a private message' do
+        let(:finder) { ComposerMessagesFinder.new(user, composer_action: 'reply', topic_id: topic.id) }
+
+        it 'should return an empty string' do
+          expect(finder.check_education_message).to eq(nil)
+        end
+      end
+    end
+
     context 'creating reply' do
-      let(:finder) { ComposerMessagesFinder.new(user, composerAction: 'reply') }
+      let(:finder) { ComposerMessagesFinder.new(user, composer_action: 'reply') }
 
       before do
         SiteSetting.stubs(:educate_until_posts).returns(10)
@@ -64,7 +85,7 @@ describe ComposerMessagesFinder do
     let(:user) { Fabricate.build(:user) }
 
     context 'replying' do
-      let(:finder) { ComposerMessagesFinder.new(user, composerAction: 'reply') }
+      let(:finder) { ComposerMessagesFinder.new(user, composer_action: 'reply') }
 
       it "has no message when `posted_too_much_in_topic?` is false" do
         user.expects(:posted_too_much_in_topic?).returns(false)
@@ -80,7 +101,7 @@ describe ComposerMessagesFinder do
   end
 
   context '.check_avatar_notification' do
-    let(:finder) { ComposerMessagesFinder.new(user, composerAction: 'createTopic') }
+    let(:finder) { ComposerMessagesFinder.new(user, composer_action: 'createTopic') }
     let(:user) { Fabricate(:user) }
 
     context "success" do
@@ -109,6 +130,21 @@ describe ComposerMessagesFinder do
       UserHistory.create!(action: UserHistory.actions[:notified_about_avatar], target_user_id: user.id )
       expect(finder.check_avatar_notification).to be_blank
     end
+
+    it "doesn't notify users if 'disable_avatar_education_message' setting is enabled" do
+      SiteSetting.disable_avatar_education_message = true
+      expect(finder.check_avatar_notification).to be_blank
+    end
+
+    it "doesn't notify users if 'sso_overrides_avatar' setting is enabled" do
+      SiteSetting.sso_overrides_avatar = true
+      expect(finder.check_avatar_notification).to be_blank
+    end
+
+    it "doesn't notify users if 'allow_uploaded_avatars' setting is disabled" do
+      SiteSetting.allow_uploaded_avatars = false
+      expect(finder.check_avatar_notification).to be_blank
+    end
   end
 
   context '.check_sequential_replies' do
@@ -126,17 +162,16 @@ describe ComposerMessagesFinder do
     end
 
     it "does not give a message for new topics" do
-      finder = ComposerMessagesFinder.new(user, composerAction: 'createTopic')
+      finder = ComposerMessagesFinder.new(user, composer_action: 'createTopic')
       expect(finder.check_sequential_replies).to be_blank
     end
 
     it "does not give a message without a topic id" do
-      expect(ComposerMessagesFinder.new(user, composerAction: 'reply').check_sequential_replies).to be_blank
+      expect(ComposerMessagesFinder.new(user, composer_action: 'reply').check_sequential_replies).to be_blank
     end
 
     context "reply" do
-      let(:finder) { ComposerMessagesFinder.new(user, composerAction: 'reply', topic_id: topic.id) }
-
+      let(:finder) { ComposerMessagesFinder.new(user, composer_action: 'reply', topic_id: topic.id) }
 
       it "does not give a message to users who are still in the 'education' phase" do
         user.stubs(:post_count).returns(9)
@@ -147,7 +182,6 @@ describe ComposerMessagesFinder do
         UserHistory.create!(action: UserHistory.actions[:notified_about_sequential_replies], target_user_id: user.id, topic_id: topic.id )
         expect(finder.check_sequential_replies).to be_blank
       end
-
 
       it "will notify you if it hasn't in the current topic" do
         UserHistory.create!(action: UserHistory.actions[:notified_about_sequential_replies], target_user_id: user.id, topic_id: topic.id+1 )
@@ -161,6 +195,11 @@ describe ComposerMessagesFinder do
 
       it "doesn't notify a user if another user posted" do
         Fabricate(:post, topic: topic, user: Fabricate(:user))
+        expect(finder.check_sequential_replies).to be_blank
+      end
+
+      it "doesn't notify in a message" do
+        Topic.any_instance.expects(:private_message?).returns(true)
         expect(finder.check_sequential_replies).to be_blank
       end
 
@@ -198,16 +237,16 @@ describe ComposerMessagesFinder do
     end
 
     it "does not give a message for new topics" do
-      finder = ComposerMessagesFinder.new(user, composerAction: 'createTopic')
+      finder = ComposerMessagesFinder.new(user, composer_action: 'createTopic')
       expect(finder.check_dominating_topic).to be_blank
     end
 
     it "does not give a message without a topic id" do
-      expect(ComposerMessagesFinder.new(user, composerAction: 'reply').check_dominating_topic).to be_blank
+      expect(ComposerMessagesFinder.new(user, composer_action: 'reply').check_dominating_topic).to be_blank
     end
 
     context "reply" do
-      let(:finder) { ComposerMessagesFinder.new(user, composerAction: 'reply', topic_id: topic.id) }
+      let(:finder) { ComposerMessagesFinder.new(user, composer_action: 'reply', topic_id: topic.id) }
 
       it "does not give a message to users who are still in the 'education' phase" do
         user.stubs(:post_count).returns(9)
@@ -265,13 +304,130 @@ describe ComposerMessagesFinder do
 
   end
 
+  context '.check_get_a_room' do
+    let(:user) { Fabricate(:user) }
+    let(:other_user) { Fabricate(:user) }
+    let(:third_user) { Fabricate(:user) }
+    let(:topic) { Fabricate(:topic, user: other_user) }
+    let(:op) { Fabricate(:post, topic_id: topic.id, user: other_user) }
+
+    let!(:other_user_reply) do
+      Fabricate(:post, topic: topic, user: third_user, reply_to_user_id: op.user_id)
+    end
+
+    let!(:first_reply) do
+      Fabricate(:post, topic: topic, user: user, reply_to_user_id: op.user_id)
+    end
+
+    let!(:second_reply) do
+      Fabricate(:post, topic: topic, user: user, reply_to_user_id: op.user_id)
+    end
+
+    before do
+      SiteSetting.educate_until_posts = 10
+      user.stubs(:post_count).returns(11)
+      SiteSetting.get_a_room_threshold = 2
+    end
+
+    it "does not show the message for new topics" do
+      finder = ComposerMessagesFinder.new(user, composer_action: 'createTopic')
+      expect(finder.check_get_a_room(min_users_posted: 2)).to be_blank
+    end
+
+    it "does not give a message without a topic id" do
+      expect(ComposerMessagesFinder.new(user, composer_action: 'reply').check_get_a_room(min_users_posted: 2)).to be_blank
+    end
+
+    context "reply" do
+      let(:finder) { ComposerMessagesFinder.new(user, composer_action: 'reply', topic_id: topic.id, post_id: op.id) }
+
+      it "does not give a message to users who are still in the 'education' phase" do
+        user.stubs(:post_count).returns(9)
+        expect(finder.check_get_a_room(min_users_posted: 2)).to be_blank
+      end
+
+      it "doesn't notify a user it has already notified about sequential replies" do
+        UserHistory.create!(
+          action: UserHistory.actions[:notified_about_get_a_room],
+          target_user_id: user.id,
+          topic_id: topic.id
+        )
+        expect(finder.check_get_a_room(min_users_posted: 2)).to be_blank
+      end
+
+      it "will notify you if it hasn't in the current topic" do
+        UserHistory.create!(
+          action: UserHistory.actions[:notified_about_get_a_room],
+          target_user_id: user.id,
+          topic_id: topic.id+1
+        )
+        expect(finder.check_get_a_room(min_users_posted: 2)).to be_present
+      end
+
+      it "won't notify you if you haven't had enough posts" do
+        SiteSetting.get_a_room_threshold = 10
+        expect(finder.check_get_a_room(min_users_posted: 2)).to be_blank
+      end
+
+      it "doesn't notify you if the posts aren't all to the same person" do
+        first_reply.update_column(:reply_to_user_id, user.id)
+        expect(finder.check_get_a_room(min_users_posted: 2)).to be_blank
+      end
+
+      it "doesn't notify you of posts to yourself" do
+        first_reply.update_column(:reply_to_user_id, user.id)
+        second_reply.update_column(:reply_to_user_id, user.id)
+        expect(finder.check_get_a_room(min_users_posted: 2)).to be_blank
+      end
+
+      it "doesn't notify in a message" do
+        topic.update_columns(category_id: nil, archetype: 'private_message')
+        expect(finder.check_get_a_room(min_users_posted: 2)).to be_blank
+      end
+
+      it "doesn't notify when replying to a different user" do
+        other_finder = ComposerMessagesFinder.new(
+          user,
+          composer_action: 'reply',
+          topic_id: topic.id,
+          post_id: other_user_reply.id
+        )
+
+        expect(other_finder.check_get_a_room(min_users_posted: 2)).to be_blank
+      end
+
+      context "with a default min_users_posted value" do
+        let!(:message) { finder.check_get_a_room }
+
+        it "works as expected" do
+          expect(message).to be_blank
+        end
+      end
+
+      context "success" do
+        let!(:message) { finder.check_get_a_room(min_users_posted: 2) }
+
+        it "works as expected" do
+          expect(message).to be_present
+          expect(message[:id]).to eq('get_a_room')
+          expect(message[:wait_for_typing]).to eq(true)
+          expect(message[:templateName]).to eq('education')
+
+          expect(UserHistory.exists_for_user?(user, :notified_about_get_a_room)).to eq(true)
+        end
+      end
+    end
+
+  end
+
+
   context '.check_reviving_old_topic' do
     let(:user)  { Fabricate(:user) }
     let(:topic) { Fabricate(:topic) }
 
     it "does not give a message without a topic id" do
-      expect(described_class.new(user, composerAction: 'createTopic').check_reviving_old_topic).to be_blank
-      expect(described_class.new(user, composerAction: 'reply').check_reviving_old_topic).to be_blank
+      expect(described_class.new(user, composer_action: 'createTopic').check_reviving_old_topic).to be_blank
+      expect(described_class.new(user, composer_action: 'reply').check_reviving_old_topic).to be_blank
     end
 
     context "a reply" do
@@ -282,12 +438,12 @@ describe ComposerMessagesFinder do
 
         it "does not notify if last post is recent" do
           topic = Fabricate(:topic, last_posted_at: 1.hour.ago)
-          expect(described_class.new(user, composerAction: 'reply', topic_id: topic.id).check_reviving_old_topic).to be_blank
+          expect(described_class.new(user, composer_action: 'reply', topic_id: topic.id).check_reviving_old_topic).to be_blank
         end
 
         it "notifies if last post is old" do
           topic = Fabricate(:topic, last_posted_at: 181.days.ago)
-          expect(described_class.new(user, composerAction: 'reply', topic_id: topic.id).check_reviving_old_topic).not_to be_blank
+          expect(described_class.new(user, composer_action: 'reply', topic_id: topic.id).check_reviving_old_topic).not_to be_blank
         end
       end
 
@@ -298,16 +454,15 @@ describe ComposerMessagesFinder do
 
         it "does not notify if last post is new" do
           topic = Fabricate(:topic, last_posted_at: 1.hour.ago)
-          expect(described_class.new(user, composerAction: 'reply', topic_id: topic.id).check_reviving_old_topic).to be_blank
+          expect(described_class.new(user, composer_action: 'reply', topic_id: topic.id).check_reviving_old_topic).to be_blank
         end
 
         it "does not notify if last post is old" do
           topic = Fabricate(:topic, last_posted_at: 365.days.ago)
-          expect(described_class.new(user, composerAction: 'reply', topic_id: topic.id).check_reviving_old_topic).to be_blank
+          expect(described_class.new(user, composer_action: 'reply', topic_id: topic.id).check_reviving_old_topic).to be_blank
         end
       end
     end
   end
 
 end
-

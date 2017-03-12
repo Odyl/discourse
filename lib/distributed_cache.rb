@@ -3,6 +3,7 @@
 # fill it up
 
 require 'weakref'
+require 'base64'
 
 class DistributedCache
   @subscribers = []
@@ -31,7 +32,7 @@ class DistributedCache
         hash = current.hash(message.site_id)
 
         case payload["op"]
-          when "set"    then hash[payload["key"]] = payload["value"]
+          when "set" then hash[payload["key"]] = payload["marshalled"] ?  Marshal.load(Base64.decode64(payload["value"])) : payload["value"]
           when "delete" then hash.delete(payload["key"])
           when "clear"  then hash.clear
         end
@@ -69,7 +70,10 @@ class DistributedCache
   end
 
   def self.set(hash, key, value)
-    publish(hash, { op: :set, key: key, value: value })
+    # special support for set
+    marshal = (Set === value || Hash === value)
+    value = Base64.encode64(Marshal.dump(value)) if marshal
+    publish(hash, { op: :set, key: key, value: value, marshalled: marshal })
   end
 
   def self.delete(hash, key)

@@ -1,9 +1,19 @@
-class DiscourseIIFE < Sprockets::Processor
+class DiscourseIIFE
+  def initialize(options = {}, &block)
+  end
+
+  def self.instance
+    @instance ||= new
+  end
+
+  def self.call(input)
+    instance.call(input)
+  end
 
   # Add a IIFE around our javascript
-  def evaluate(context, locals)
-
-    path = context.pathname.to_s
+  def call(input)
+    path = input[:environment].context_class.new(input).pathname.to_s
+    data = input[:data]
 
     # Only discourse or admin paths
     return data unless (path =~ /\/javascripts\/discourse/ || path =~ /\/javascripts\/admin/ || path =~ /\/test\/javascripts/)
@@ -24,17 +34,9 @@ class DiscourseIIFE < Sprockets::Processor
     return data if path =~ /\.hbrs/
     return data if path =~ /\.hbs/
 
-    res = "(function () {\n\nvar $ = window.jQuery;\n// IIFE Wrapped Content Begins:\n\n#{data}\n\n// IIFE Wrapped Content Ends\n\n })(this);"
+    return data if path =~ /discourse-loader/
 
-    # Include JS code for JSHint
-    unless Rails.env.production?
-      req_path = path.sub(Rails.root.to_s, '')
-                     .sub("/app/assets/javascripts", "")
-                     .sub("/test/javascripts", "")
-      res << "\nwindow.__jshintSrc = window.__jshintSrc || {}; window.__jshintSrc['/assets#{req_path}'] = #{data.to_json};\n"
-    end
-
-    res
+    "(function () {\n\nvar $ = window.jQuery;\n// IIFE Wrapped Content Begins:\n\n#{data}\n\n// IIFE Wrapped Content Ends\n\n })(this);"
   end
 
 end

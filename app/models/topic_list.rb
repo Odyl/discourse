@@ -1,7 +1,30 @@
 require_dependency 'avatar_lookup'
+require_dependency 'primary_group_lookup'
 
 class TopicList
   include ActiveModel::Serialization
+
+  cattr_accessor :preloaded_custom_fields
+  self.preloaded_custom_fields = Set.new
+
+  def self.on_preload(&blk)
+    (@preload ||= Set.new) << blk
+  end
+
+  def self.cancel_preload(&blk)
+    if @preload
+      @preload.delete blk
+      if @preload.length == 0
+        @preload = nil
+      end
+    end
+  end
+
+  def self.preload(topics, object)
+    if @preload
+      @preload.each{|preload| preload.call(topics, object)}
+    end
+  end
 
   attr_accessor :more_topics_url,
                 :prev_topics_url,
@@ -10,28 +33,43 @@ class TopicList
                 :draft_sequence,
                 :filter,
                 :for_period,
-                :per_page
+                :per_page,
+                :tags,
+                :current_user
 
   def initialize(filter, current_user, topics, opts=nil)
     @filter = filter
     @current_user = current_user
     @topics_input = topics
     @opts = opts || {}
+
+    if @opts[:category]
+      @category = Category.find_by(id: @opts[:category_id])
+    end
+
+    preloaded_custom_fields << DiscourseTagging::TAGS_FIELD_NAME if SiteSetting.tagging_enabled
+  end
+
+  def tags
+    opts = @category ? { category: @category } : {}
+    opts[:guardian] = Guardian.new(@current_user)
+    Tag.top_tags(opts)
   end
 
   def preload_key
-    if @opts[:category]
-      c = Category.where(id: @opts[:category_id]).first
-      return "topic_list_#{c.url.sub(/^\//, '')}/l/#{@filter}" if c
+    if @category
+      "topic_list_#{@category.url.sub(/^\//, '')}/l/#{@filter}"
+    else
+      "topic_list_#{@filter}"
     end
-
-    "topic_list_#{@filter}"
   end
 
   # Lazy initialization
   def topics
-    return @topics if @topics.present?
+    @topics ||= load_topics
+  end
 
+  def load_topics
     @topics = @topics_input
 
     # Attach some data for serialization to each topic
@@ -63,6 +101,7 @@ class TopicList
     end
 
     avatar_lookup = AvatarLookup.new(user_ids)
+    primary_group_lookup = PrimaryGroupLookup.new(user_ids)
 
     @topics.each do |ft|
       ft.user_data = @topic_lookup[ft.id] if @topic_lookup.present?
@@ -71,10 +110,20 @@ class TopicList
         ft.user_data.post_action_data = {post_action_type => actions}
       end
 
-      ft.posters = ft.posters_summary(avatar_lookup: avatar_lookup)
+      ft.posters = ft.posters_summary(
+        avatar_lookup: avatar_lookup,
+        primary_group_lookup: primary_group_lookup
+      )
+
       ft.participants = ft.participants_summary(avatar_lookup: avatar_lookup, user: @current_user)
       ft.topic_list = self
     end
+
+    if preloaded_custom_fields.present?
+      Topic.preload_custom_fields(@topics, preloaded_custom_fields)
+    end
+
+    TopicList.preload(@topics, self)
 
     @topics
   end

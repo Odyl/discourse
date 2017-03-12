@@ -1,8 +1,8 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe Notification do
   before do
-    ActiveRecord::Base.observers.enable :all
+    NotificationEmailer.enable
   end
 
   it { is_expected.to validate_presence_of :notification_type }
@@ -10,6 +10,22 @@ describe Notification do
 
   it { is_expected.to belong_to :user }
   it { is_expected.to belong_to :topic }
+
+  describe '#types' do
+    context "verify enum sequence" do
+      before do
+        @types = Notification.types
+      end
+
+      it "'mentioned' should be at 1st position" do
+        expect(@types[:mentioned]).to eq(1)
+      end
+
+      it "'group_mentioned' should be at 15th position" do
+        expect(@types[:group_mentioned]).to eq(15)
+      end
+    end
+  end
 
   describe 'post' do
     let(:topic) { Fabricate(:topic) }
@@ -69,6 +85,7 @@ describe Notification do
     end
 
   end
+
   describe 'unread counts' do
 
     let(:user) { Fabricate(:user) }
@@ -122,28 +139,16 @@ describe Notification do
     end
   end
 
-  describe '@mention' do
-
-    it "calls email_user_mentioned on creating a notification" do
-      UserEmailObserver.any_instance.expects(:after_commit).with(instance_of(Notification))
-      Fabricate(:notification)
-    end
-
-  end
-
-  describe '@mention' do
-    it "calls email_user_quoted on creating a quote notification" do
-      UserEmailObserver.any_instance.expects(:after_commit).with(instance_of(Notification))
-      Fabricate(:quote_notification)
-    end
-  end
 
   describe 'private message' do
     before do
       @topic = Fabricate(:private_message_topic)
       @post = Fabricate(:post, topic: @topic, user: @topic.user)
-      PostAlerter.post_created(@post)
       @target = @post.topic.topic_allowed_users.reject{|a| a.user_id == @post.user_id}[0].user
+
+      TopicUser.change(@target.id, @topic.id, notification_level: TopicUser.notification_levels[:watching])
+
+      PostAlerter.post_created(@post)
     end
 
     it 'should create and rollup private message notifications' do
@@ -155,7 +160,6 @@ describe Notification do
       Fabricate(:post, topic: @topic, user: @topic.user)
       @target.reload
       expect(@target.unread_private_messages).to eq(1)
-
     end
 
   end
@@ -222,7 +226,7 @@ describe Notification do
       end
       Notification.create!(read: true, user_id: user.id, topic_id: 2, post_number: 4, data: '{}', notification_type: 1)
 
-      expect(Notification.mark_posts_read(user,2,[1,2,3,4])).to eq(3)
+      expect { Notification.mark_posts_read(user,2,[1,2,3,4]) }.to change { Notification.where(read: true).count }.by(3)
     end
   end
 
@@ -230,7 +234,8 @@ describe Notification do
   describe 'ensure consistency' do
     it 'deletes notifications if post is missing or deleted' do
 
-      ActiveRecord::Base.observers.disable :all
+      NotificationEmailer.disable
+
       p = Fabricate(:post)
       p2 = Fabricate(:post)
 
@@ -275,6 +280,13 @@ describe Notification do
 
     def regular
       fab(Notification.types[:liked], true)
+    end
+
+    it 'correctly finds visible notifications' do
+      pm
+      expect(Notification.visible.count).to eq(1)
+      post.topic.trash!
+      expect(Notification.visible.count).to eq(0)
     end
 
     it 'orders stuff correctly' do

@@ -6,7 +6,10 @@
 // --------------------------------------------------
 
 .list-controls {
-  margin: 5px;
+  .category-breadcrumb.hidden {
+    display: none;
+  }
+  margin: 5px 0;
   .nav {
     float: left;
     margin-right: 15px;
@@ -17,6 +20,37 @@
   .btn {
     float: right;
     margin-left: 8px;
+    margin-top: 5px;
+  }
+  .nav-pills {
+    position: relative;
+  }
+  .nav-pills .drop {
+    border: 1px solid dark-light-diff($primary, $secondary, 90%, -65%);
+    position: absolute;
+    z-index: 1000;
+    background-color: $secondary;
+    padding: 0 10px 10px 10px;
+    width: 150px;
+    top: 100%;
+    margin: 0;
+    li {
+      list-style-type: none;
+      margin-left: 0;
+      margin-top: 5px;
+      padding-top: 10px;
+      a {
+        width: 100%;
+        display: inline-block;
+      }
+    }
+
+  }
+  .nav-pills > li {
+    background: dark-light-diff($primary, $secondary, 90%, -65%);
+    i.fa-caret-down {
+      margin-left: 8px;
+    }
   }
 }
 
@@ -29,24 +63,45 @@
 
 .topic-list {
 
+  .right {
+    margin-left: 55px;
+  }
+
   > tbody > tr {
     &.highlighted {
-      background-color: scale-color($tertiary, $lightness: 85%);
+      animation: background-fade-highlight 2.5s ease-out;
     }
   }
 
   th,
   td {
-    padding: 7px 5px;
-    color: scale-color($primary, $lightness: 50%);
+    padding: 7px 0;
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
+    max-width: 300px;
   }
 
   a.title {color: $primary;}
 
-  .badge-notification {
+  .badge-notification, .category-topic-link td.num .badge-notification {
     position: relative;
     top: -1px;
-      i {color: $secondary;}
+    font-size: 1.071em;
+    padding: 4px 6px 3px 6px;
+    i {color: $secondary;}
+
+    &.new-topic::before {
+      margin-right: 0;
+    }
+    &.new-topic {
+      padding: 0;
+      top: -2px;
+    }
+  }
+
+  .category-topic-link td.num .badge-notification {
+    &.new-posts, &.unread-posts {
+      color: dark-light-choose($secondary, $secondary);
+    }
   }
 
   .topic-item-stats {
@@ -57,25 +112,44 @@
     .category a {
       max-width: 160px;
     }
-    .num .fa {
-      color: scale-color($primary, $lightness: 50%);
+    .num .fa, a, a:visited {
+      color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
     }
   }
 
-  .num.posts {
-    font-weight: bold;
-  }
 
   .age {
     white-space: nowrap;
     a {
-      padding: 15px 10px 15px 5px;
+      // let's make all ages dim on mobile so we're not
+      // overwhelming people with info about each topic
+      color: dark-light-choose(scale-color($primary, $lightness: 70%), scale-color($secondary, $lightness: 30%)) !important;
     }
   }
 }
 
 // Category list
 // --------------------------------------------------
+.categories-list .list-container {
+  margin-left: -10px; // Extend past the .wrap padding to the edge of the window
+}
+
+.category-list-item.category {
+  // Allow percentage widths on table cells to include their padding
+  box-sizing: border-box;
+  *, *:before, *:after {
+    box-sizing: inherit;
+  }
+
+  .posts {
+    width: 10%;
+    vertical-align: top;
+  }
+
+  .age {
+    margin-left: 5px;
+  }
+}
 
 tr.category-topic-link {
   border-top: darken($secondary, 3%) 1px solid;
@@ -109,7 +183,7 @@ tr.category-topic-link {
     .featured-topic {
       margin: 8px 0;
       a.last-posted-at, a.last-posted-at:visited {
-        color: scale-color($primary, $lightness: 50%);
+        color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
       }
     }
   }
@@ -126,7 +200,7 @@ tr.category-topic-link {
   h3 {
     display: inline-block;
     font-size: 1.286em;
-    margin: 10px 0 0 5px;
+    margin: 0 0 0 10px;
     i {
       margin-right: 5px;
     }
@@ -137,6 +211,10 @@ tr.category-topic-link {
 
   .category-topic-link .main-link, .subcategories-list td, .category-description td {
     padding-left: 10px;
+  }
+
+  .category-topic-link .main-link .age {
+    font-size: 0.857em;
   }
 
   .category-description td {
@@ -162,6 +240,18 @@ tr.category-topic-link {
     font-size: 110%;
   }
 
+  .category-topic-link {
+    .num {
+      white-space: nowrap;
+      .number {
+        font-size: 1.071em;
+      }
+    }
+    .topic-excerpt {
+      width: 110%;
+    }
+  }
+
 
   .posters {
     float: left;
@@ -172,7 +262,7 @@ tr.category-topic-link {
     figure {
       float: left;
       margin: 3px 7px 0 0;
-      color: scale-color($primary, $lightness: 10%);
+      color: dark-light-choose(scale-color($primary, $lightness: 10%), scale-color($secondary, $lightness: 90%));
       font-weight: bold;
       font-size: 0.857em;
     }
@@ -189,7 +279,7 @@ tr.category-topic-link {
 
 
 .topic-list-bottom {
-  margin: 20px 12px 0 12px;
+  margin: 20px 0 0 0;
 }
 
 
@@ -234,17 +324,14 @@ tr.category-topic-link {
   float: left;
   width: 280px;
   padding: 4px 0;
-  margin: 1px 0 0;
   list-style: none;
   background-color: $secondary;
-  border: 1px solid scale-color-diff();
-  border: 1px solid rgba(0, 0, 0, 0.2);
+  border: 1px solid dark-light-choose(rgba(0, 0, 0, 0.2), scale-color($primary, $lightness: -60%));
   border-radius: 5px;
   box-shadow: 0 5px 10px rgba(0, 0, 0, 0.2);
   background-clip: padding-box;
-  margin-bottom: 20px;
-.title {font-weight: bold; display: block;}
-
+  margin: 1px 0 20px;
+  .title {font-weight: bold; display: block;}
 }
 .dropdown-menu a {
   display: block;
@@ -292,7 +379,7 @@ ol.category-breadcrumb {
   .btn-default.pull-right { margin-right: 10px; }
 }
 
-.category-notification-menu {
+.category-notification-menu, .tags-admin-menu {
   display: none;
 }
 
@@ -307,20 +394,32 @@ ol.category-breadcrumb {
   padding: 8px 0;
 }
 
-.period-chooser {
-  button {
-    margin-top: 10px;
-  }
-}
-
 button.dismiss-read {
   margin-right: 10px;
 }
 
 // base defines extra padding for easier click/top of title field
 // this is a bit too much for mobile
-td.main-link {
+td .main-link {
+  width: 80%;
+  display: inline-block;
   a.title {
     padding: 5px 10px 5px 0;
+    word-wrap: break-word;
   }
+}
+.topic-list {
+  .posts-map {
+    font-size: 1.15em;
+  }
+  // so the topic excerpt is full width
+  // as the containing div is 80%
+  .topic-excerpt {
+    padding-right: 0;
+    width: 120%;
+  }
+}
+
+.category-list-item .category-description {
+  display: none;
 }

@@ -1,22 +1,42 @@
 class Group < ActiveRecord::Base
   include HasCustomFields
+  include AnonCacheInvalidator
 
   has_many :category_groups, dependent: :destroy
   has_many :group_users, dependent: :destroy
+  has_many :group_mentions, dependent: :destroy
+
+  has_many :group_archived_messages, dependent: :destroy
 
   has_many :categories, through: :category_groups
   has_many :users, through: :group_users
+  has_many :group_histories, dependent: :destroy
 
-  has_many :group_managers, dependent: :destroy
-  has_many :managers, through: :group_managers
+  has_and_belongs_to_many :web_hooks
+
+  before_save :downcase_incoming_email
+  before_save :cook_bio
 
   after_save :destroy_deletions
   after_save :automatic_group_membership
   after_save :update_primary_group
   after_save :update_title
 
+  after_save :enqueue_update_mentions_job,
+    if: Proc.new { |g| g.name_was && g.name_changed? }
+
+  after_save :expire_cache
+  after_destroy :expire_cache
+
+  def expire_cache
+    ApplicationSerializer.expire_cache_fragment!("group_names")
+  end
+
   validate :name_format_validator
   validates_uniqueness_of :name, case_sensitive: false
+  validate :automatic_membership_email_domains_format_validator
+  validate :incoming_email_validator
+  validates :flair_url, url: true, if: Proc.new { |g| g.flair_url && g.flair_url[0,3] != 'fa-' }
 
   AUTO_GROUPS = {
     :everyone => 0,
@@ -31,6 +51,7 @@ class Group < ActiveRecord::Base
   }
 
   AUTO_GROUP_IDS = Hash[*AUTO_GROUPS.to_a.flatten.reverse]
+  STAFF_GROUPS = [:admins, :moderators, :staff]
 
   ALIAS_LEVELS = {
     :nobody => 0,
@@ -42,11 +63,99 @@ class Group < ActiveRecord::Base
 
   validates :alias_level, inclusion: { in: ALIAS_LEVELS.values}
 
+  scope :visible_groups, ->(user) {
+    groups = Group.order(name: :asc).where("groups.id > 0")
+
+    if !user || !user.admin
+      owner_group_ids = GroupUser.where(user: user, owner: true).pluck(:group_id)
+
+      groups = groups.where("
+        (groups.automatic = false AND groups.visible = true) OR groups.id IN (?)
+      ", owner_group_ids)
+    end
+
+    groups
+  }
+
+  scope :mentionable, lambda {|user|
+
+    levels = [ALIAS_LEVELS[:everyone]]
+
+    if user && user.admin?
+      levels = [ALIAS_LEVELS[:everyone],
+                ALIAS_LEVELS[:only_admins],
+                ALIAS_LEVELS[:mods_and_admins],
+                ALIAS_LEVELS[:members_mods_and_admins]]
+    elsif user && user.moderator?
+      levels = [ALIAS_LEVELS[:everyone],
+                ALIAS_LEVELS[:mods_and_admins],
+                ALIAS_LEVELS[:members_mods_and_admins]]
+    end
+
+    where("alias_level in (:levels) OR
+          (
+            alias_level = #{ALIAS_LEVELS[:members_mods_and_admins]} AND id in (
+            SELECT group_id FROM group_users WHERE user_id = :user_id)
+          )", levels: levels, user_id: user && user.id )
+  }
+
+  def downcase_incoming_email
+    self.incoming_email = (incoming_email || "").strip.downcase.presence
+  end
+
+  def cook_bio
+    if !self.bio_raw.blank?
+      self.bio_cooked = PrettyText.cook(self.bio_raw)
+    end
+  end
+
+  def incoming_email_validator
+    return if self.automatic || self.incoming_email.blank?
+
+    incoming_email.split("|").each do |email|
+      escaped = Rack::Utils.escape_html(email)
+      if !Email.is_valid?(email)
+        self.errors.add(:base, I18n.t('groups.errors.invalid_incoming_email', email: escaped))
+      elsif group = Group.where.not(id: self.id).find_by_email(email)
+        self.errors.add(:base, I18n.t('groups.errors.email_already_used_in_group', email: escaped, group_name: Rack::Utils.escape_html(group.name)))
+      elsif category = Category.find_by_email(email)
+        self.errors.add(:base, I18n.t('groups.errors.email_already_used_in_category', email: escaped, category_name: Rack::Utils.escape_html(category.name)))
+      end
+    end
+  end
+
   def posts_for(guardian, before_post_id=nil)
-    user_ids = group_users.map {|gu| gu.user_id}
-    result = Post.where(user_id: user_ids).includes(:user, :topic, :topic => :category).references(:posts, :topics, :category)
+    user_ids = group_users.map { |gu| gu.user_id }
+    result = Post.includes(:user, :topic, topic: :category)
+                 .references(:posts, :topics, :category)
+                 .where(user_id: user_ids)
                  .where('topics.archetype <> ?', Archetype.private_message)
                  .where(post_type: Post.types[:regular])
+
+    result = guardian.filter_allowed_categories(result)
+    result = result.where('posts.id < ?', before_post_id) if before_post_id
+    result.order('posts.created_at desc')
+  end
+
+  def messages_for(guardian, before_post_id=nil)
+    result = Post.includes(:user, :topic, topic: :category)
+                 .references(:posts, :topics, :category)
+                 .where('topics.archetype = ?', Archetype.private_message)
+                 .where(post_type: Post.types[:regular])
+                 .where('topics.id IN (SELECT topic_id FROM topic_allowed_groups WHERE group_id = ?)', self.id)
+
+    result = guardian.filter_allowed_categories(result)
+    result = result.where('posts.id < ?', before_post_id) if before_post_id
+    result.order('posts.created_at desc')
+  end
+
+  def mentioned_posts_for(guardian, before_post_id=nil)
+    result = Post.joins(:group_mentions)
+                 .includes(:user, :topic, topic: :category)
+                 .references(:posts, :topics, :category)
+                 .where('topics.archetype <> ?', Archetype.private_message)
+                 .where(post_type: Post.types[:regular])
+                 .where('group_mentions.group_id = ?', self.id)
 
     result = guardian.filter_allowed_categories(result)
     result = result.where('posts.id < ?', before_post_id) if before_post_id
@@ -58,9 +167,7 @@ class Group < ActiveRecord::Base
   end
 
   def self.refresh_automatic_group!(name)
-
-    id = AUTO_GROUPS[name]
-    return unless id
+    return unless id = AUTO_GROUPS[name]
 
     unless group = self.lookup_group(name)
       group = Group.new(name: name.to_s, automatic: true)
@@ -68,17 +175,21 @@ class Group < ActiveRecord::Base
       group.save!
     end
 
-    group.name = I18n.t("groups.default_names.#{name}")
-
     # don't allow shoddy localization to break this
-    validator = UsernameValidator.new(group.name)
-    unless validator.valid_format?
-      group.name = name
-    end
+    localized_name = I18n.t("groups.default_names.#{name}")
+    validator = UsernameValidator.new(localized_name)
+
+    group.name =
+      if !Group.where("lower(name) = ?", localized_name).exists? && validator.valid_format?
+        localized_name
+      else
+        name
+      end
 
     # the everyone group is special, it can include non-users so there is no
     # way to have the membership in a table
     if name == :everyone
+      group.visible = false
       group.save!
       return group
     end
@@ -141,6 +252,17 @@ class Group < ActiveRecord::Base
     group
   end
 
+  def self.ensure_consistency!
+    reset_all_counters!
+    refresh_automatic_groups!
+  end
+
+  def self.reset_all_counters!
+    Group.pluck(:id).each do |group_id|
+      Group.reset_counters(group_id, :group_users)
+    end
+  end
+
   def self.refresh_automatic_groups!(*args)
     if args.length == 0
       args = AUTO_GROUPS.keys
@@ -160,26 +282,8 @@ class Group < ActiveRecord::Base
     lookup_group(name) || refresh_automatic_group!(name)
   end
 
-  def self.search_group(name, current_user)
-    levels = [ALIAS_LEVELS[:everyone]]
-
-    if current_user.admin?
-      levels = [ALIAS_LEVELS[:everyone],
-                ALIAS_LEVELS[:only_admins],
-                ALIAS_LEVELS[:mods_and_admins],
-                ALIAS_LEVELS[:members_mods_and_admins]]
-    elsif current_user.moderator?
-      levels = [ALIAS_LEVELS[:everyone],
-                ALIAS_LEVELS[:mods_and_admins],
-                ALIAS_LEVELS[:members_mods_and_admins]]
-    end
-
-    Group.where("name ILIKE :term_like AND (" +
-        " alias_level in (:levels)" +
-        " OR (alias_level = #{ALIAS_LEVELS[:members_mods_and_admins]} AND id in (" +
-            "SELECT group_id FROM group_users WHERE user_id= :user_id)" +
-          ")" +
-        ")", term_like: "#{name.downcase}%", levels: levels, user_id: current_user.id)
+  def self.search_group(name)
+    Group.where(visible: true).where("name ILIKE :term_like", term_like: "#{name}%")
   end
 
   def self.lookup_group(name)
@@ -268,7 +372,8 @@ class Group < ActiveRecord::Base
   end
 
   def add(user)
-    self.users.push(user)
+    self.users.push(user) unless self.users.include?(user)
+    self
   end
 
   def remove(user)
@@ -276,14 +381,67 @@ class Group < ActiveRecord::Base
     user.update_columns(primary_group_id: nil) if user.primary_group_id == self.id
   end
 
-  def appoint_manager(user)
-    managers << user
+  def add_owner(user)
+    if group_user = self.group_users.find_by(user: user)
+      group_user.update_attributes!(owner: true) if !group_user.owner
+    else
+      GroupUser.create!(user: user, group: self, owner: true)
+    end
+  end
+
+  def self.find_by_email(email)
+    self.where("string_to_array(incoming_email, '|') @> ARRAY[?]", Email.downcase(email)).first
+  end
+
+  def bulk_add(user_ids)
+    if user_ids.present?
+      Group.exec_sql("INSERT INTO group_users
+                                  (group_id, user_id, created_at, updated_at)
+                     SELECT #{self.id},
+                            u.id,
+                            CURRENT_TIMESTAMP,
+                            CURRENT_TIMESTAMP
+                     FROM users AS u
+                     WHERE u.id IN (#{user_ids.join(', ')})
+                       AND NOT EXISTS(SELECT 1 FROM group_users AS gu
+                                      WHERE gu.user_id = u.id AND
+                                            gu.group_id = #{self.id})")
+
+      if self.primary_group?
+        User.where(id: user_ids).update_all(primary_group_id: self.id)
+      end
+
+      if self.title.present?
+        User.where(id: user_ids).update_all(title: self.title)
+      end
+
+      if self.grant_trust_level.present?
+        Jobs.enqueue(:bulk_grant_trust_level, user_ids: user_ids, trust_level: self.grant_trust_level)
+      end
+    end
+    true
+  end
+
+  def staff?
+    STAFF_GROUPS.include?(self.name.to_sym)
   end
 
   protected
 
     def name_format_validator
       UsernameValidator.perform_validation(self, 'name')
+    end
+
+    def automatic_membership_email_domains_format_validator
+      return if self.automatic_membership_email_domains.blank?
+
+      domains = self.automatic_membership_email_domains.split("|")
+      domains.each do |domain|
+        domain.sub!(/^https?:\/\//, '')
+        domain.sub!(/\/.*$/, '')
+        self.errors.add :base, (I18n.t('groups.errors.invalid_domain', domain: domain)) unless domain =~ /\A[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,24}(:[0-9]{1,5})?(\/.*)?\Z/i
+      end
+      self.automatic_membership_email_domains = domains.join("|")
     end
 
     # hack around AR
@@ -356,6 +514,15 @@ SQL
         builder.exec
       end
     end
+
+  private
+
+    def enqueue_update_mentions_job
+      Jobs.enqueue(:update_group_mentions,
+        previous_name: self.name_was,
+        group_id: self.id
+      )
+    end
 end
 
 # == Schema Information
@@ -363,7 +530,7 @@ end
 # Table name: groups
 #
 #  id                                 :integer          not null, primary key
-#  name                               :string(255)      not null
+#  name                               :string           not null
 #  created_at                         :datetime         not null
 #  updated_at                         :datetime         not null
 #  automatic                          :boolean          default(FALSE), not null
@@ -372,8 +539,22 @@ end
 #  visible                            :boolean          default(TRUE), not null
 #  automatic_membership_email_domains :text
 #  automatic_membership_retroactive   :boolean          default(FALSE)
+#  primary_group                      :boolean          default(FALSE), not null
+#  title                              :string
+#  grant_trust_level                  :integer
+#  incoming_email                     :string
+#  has_messages                       :boolean          default(FALSE), not null
+#  flair_url                          :string
+#  flair_bg_color                     :string
+#  flair_color                        :string
+#  bio_raw                            :text
+#  bio_cooked                         :text
+#  public                             :boolean          default(FALSE), not null
+#  allow_membership_requests          :boolean          default(FALSE), not null
+#  full_name                          :string
 #
 # Indexes
 #
-#  index_groups_on_name  (name) UNIQUE
+#  index_groups_on_incoming_email  (incoming_email) UNIQUE
+#  index_groups_on_name            (name) UNIQUE
 #

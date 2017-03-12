@@ -1,8 +1,9 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe PostAnalyzer do
 
   let(:default_topic_id) { 12 }
+  let(:url) { 'https://twitter.com/evil_trout/status/345954894420787200' }
 
   describe '#cook' do
     let(:post_analyzer) {PostAnalyzer.new nil, nil  }
@@ -11,15 +12,12 @@ describe PostAnalyzer do
     let(:options) { {} }
     let(:args) { [raw, options] }
 
-    let(:url) {
-      'https://twitter.com/evil_trout/status/345954894420787200'
-    }
-
     before { Oneboxer.stubs(:onebox) }
 
     it 'fetches the cached onebox for any urls in the post' do
       Oneboxer.expects(:cached_onebox).with url
       post_analyzer.cook(*args)
+      expect(post_analyzer.found_oneboxes?).to be(true)
     end
 
     it 'does not invalidate the onebox cache' do
@@ -40,8 +38,9 @@ describe PostAnalyzer do
   context "links" do
     let(:raw_no_links) { "hello world my name is evil trout" }
     let(:raw_one_link_md) { "[jlawr](http://www.imdb.com/name/nm2225369)" }
-    let(:raw_two_links_html) { "<a href='http://disneyland.disney.go.com/'>disney</a> <a href='http://reddit.com'>reddit</a>"}
-    let(:raw_three_links) { "http://discourse.org and http://discourse.org/another_url and http://www.imdb.com/name/nm2225369"}
+    let(:raw_two_links_html) { "<a href='http://disneyland.disney.go.com/'>disney</a> <a href='http://reddit.com'>reddit</a>" }
+    let(:raw_three_links) { "http://discourse.org and http://discourse.org/another_url and http://www.imdb.com/name/nm2225369" }
+    let(:raw_elided) { "<details class='elided'>\n<summary title='Show trimmed content'>&#183;&#183;&#183;</summary>\nhttp://discourse.org\n</details>" }
 
     describe "raw_links" do
       it "returns a blank collection for a post with no links" do
@@ -62,6 +61,12 @@ describe PostAnalyzer do
       it "can find three links without markup" do
         post_analyzer = PostAnalyzer.new(raw_three_links, default_topic_id)
         expect(post_analyzer.raw_links).to eq(["http://discourse.org", "http://discourse.org/another_url", "http://www.imdb.com/name/nm2225369"])
+      end
+
+      it "doesn't extract links from elided part" do
+        post_analyzer = PostAnalyzer.new(raw_elided, default_topic_id)
+        post_analyzer.expects(:cook).returns("<p><details class='elided'>\n<summary title='Show trimmed content'>&#183;&#183;&#183;</summary>\n<a href='http://discourse.org'>discourse.org</a>\n</details></p>")
+        expect(post_analyzer.raw_links).to be_blank
       end
     end
 
@@ -156,6 +161,8 @@ describe PostAnalyzer do
 
     it "finds links from HTML" do
       post_analyzer = PostAnalyzer.new(raw_post_two_links_html, default_topic_id)
+      post_analyzer.cook(raw_post_two_links_html, {})
+      expect(post_analyzer.found_oneboxes?).to be(false)
       expect(post_analyzer.link_count).to eq(2)
     end
   end
@@ -198,9 +205,25 @@ describe PostAnalyzer do
       expect(post_analyzer.raw_mentions).to eq(['finn'])
     end
 
+    it "ignores oneboxes" do
+      post_analyzer = PostAnalyzer.new("Hello @Jake\n#{url}", default_topic_id)
+      post_analyzer.stubs(:cook).returns("<p>Hello <span class=\"mention\">@Jake</span><br><a href=\"https://twitter.com/evil_trout/status/345954894420787200\" class=\"onebox\" target=\"_blank\" rel=\"nofollow noopener\">@Finn</a></p>")
+      expect(post_analyzer.raw_mentions).to eq(['jake'])
+    end
+
     it "handles underscore in username" do
       post_analyzer = PostAnalyzer.new("@Jake @Finn @Jake_Old", default_topic_id)
       expect(post_analyzer.raw_mentions).to eq(['jake', 'finn', 'jake_old'])
+    end
+
+    it "handles hyphen in groupname" do
+      post_analyzer = PostAnalyzer.new("@org-board", default_topic_id)
+      expect(post_analyzer.raw_mentions).to eq(['org-board'])
+    end
+
+    it "ignores emails" do
+      post_analyzer = PostAnalyzer.new("1@test.com 1@best.com @best @not", default_topic_id)
+      expect(post_analyzer.raw_mentions).to eq(['best', 'not'])
     end
   end
 end

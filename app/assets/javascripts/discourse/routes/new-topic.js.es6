@@ -7,12 +7,13 @@ export default Discourse.Route.extend({
         if (self.controllerFor('navigation/default').get('canCreateTopic')) {
           // User can create topic
           Ember.run.next(function() {
-            e.send('createNewTopicViaParams', transition.queryParams.title, transition.queryParams.body, transition.queryParams.category_id, transition.queryParams.category);
+            e.send('createNewTopicViaParams', transition.queryParams.title, transition.queryParams.body, transition.queryParams.category_id, transition.queryParams.category, transition.queryParams.tags);
           });
         }
       });
     } else {
       // User is not logged in
+      self.session.set("shouldRedirectToUrl", window.location.href);
       self.replaceWith('login');
     }
   }

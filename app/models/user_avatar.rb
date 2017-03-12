@@ -10,19 +10,20 @@ class UserAvatar < ActiveRecord::Base
   end
 
   def update_gravatar!
-    DistributedMutex.synchronize("update_gravatar_#{user.id}") do
+    DistributedMutex.synchronize("update_gravatar_#{user_id}") do
       begin
         # special logic for our system user
-        email_hash = user.id == Discourse::SYSTEM_USER_ID ? User.email_hash("info@discourse.org") : user.email_hash
+        email_hash = user_id == Discourse::SYSTEM_USER_ID ? User.email_hash("info@discourse.org") : user.email_hash
 
         self.last_gravatar_download_attempt = Time.new
 
-        gravatar_url = "http://www.gravatar.com/avatar/#{email_hash}.png?s=500&d=404"
+        max = Discourse.avatar_sizes.max
+        gravatar_url = "http://www.gravatar.com/avatar/#{email_hash}.png?s=#{max}&d=404"
         tempfile = FileHelper.download(gravatar_url, SiteSetting.max_image_size_kb.kilobytes, "gravatar")
-        upload = Upload.create_for(user.id, tempfile, 'gravatar.png', tempfile.size, { origin: gravatar_url })
+        upload = Upload.create_for(user_id, tempfile, 'gravatar.png', File.size(tempfile.path), origin: gravatar_url, image_type: "avatar")
 
         if gravatar_upload_id != upload.id
-          gravatar_upload.try(:destroy!)
+          gravatar_upload.try(:destroy!) rescue nil
           self.gravatar_upload = upload
           save!
         end
@@ -30,11 +31,62 @@ class UserAvatar < ActiveRecord::Base
         save!
       rescue SocketError
         # skip saving, we are not connected to the net
-        Rails.logger.warn "Failed to download gravatar, socket error - user id #{user.id}"
+        Rails.logger.warn "Failed to download gravatar, socket error - user id #{user_id}"
       ensure
         tempfile.try(:close!)
       end
     end
+  end
+
+  def self.local_avatar_url(hostname, username, upload_id, size)
+    self.local_avatar_template(hostname, username, upload_id).gsub("{size}", size.to_s)
+  end
+
+  def self.local_avatar_template(hostname, username, upload_id)
+    version = self.version(upload_id)
+    "#{Discourse.base_uri}/user_avatar/#{hostname}/#{username}/{size}/#{version}.png"
+  end
+
+  def self.external_avatar_url(user_id, upload_id, size)
+    self.external_avatar_template(user_id, upload_id).gsub("{size}", size.to_s)
+  end
+
+  def self.external_avatar_template(user_id, upload_id)
+    version = self.version(upload_id)
+    "#{Discourse.store.absolute_base_url}/avatars/#{user_id}/{size}/#{version}.png"
+  end
+
+  def self.version(upload_id)
+    "#{upload_id}_#{OptimizedImage::VERSION}"
+  end
+
+  def self.import_url_for_user(avatar_url, user, options=nil)
+    tempfile = FileHelper.download(avatar_url, SiteSetting.max_image_size_kb.kilobytes, "sso-avatar", true)
+
+    ext = FastImage.type(tempfile).to_s
+    tempfile.rewind
+
+    upload = Upload.create_for(user.id, tempfile, "external-avatar." + ext, File.size(tempfile.path), origin: avatar_url, image_type: "avatar")
+
+    user.create_user_avatar unless user.user_avatar
+
+    if !user.user_avatar.contains_upload?(upload.id)
+      user.user_avatar.update_columns(custom_upload_id: upload.id)
+
+      override_gravatar = !options || options[:override_gravatar]
+
+      if user.uploaded_avatar_id.nil? ||
+          !user.user_avatar.contains_upload?(user.uploaded_avatar_id) ||
+          override_gravatar
+        user.update_columns(uploaded_avatar_id: upload.id)
+      end
+    end
+
+  rescue => e
+    # skip saving, we are not connected to the net
+    Rails.logger.warn "#{e}: Failed to download external avatar: #{avatar_url}, user id #{ user.id }"
+  ensure
+    tempfile.close! if tempfile && tempfile.respond_to?(:close!)
   end
 
 end
@@ -53,5 +105,7 @@ end
 #
 # Indexes
 #
-#  index_user_avatars_on_user_id  (user_id)
+#  index_user_avatars_on_custom_upload_id    (custom_upload_id)
+#  index_user_avatars_on_gravatar_upload_id  (gravatar_upload_id)
+#  index_user_avatars_on_user_id             (user_id)
 #

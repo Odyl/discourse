@@ -23,6 +23,7 @@ class SiteSetting < ActiveRecord::Base
   end
 
   load_settings(File.join(Rails.root, 'config', 'site_settings.yml'))
+  setup_deprecated_methods
 
   unless Rails.env.test? && ENV['LOAD_PLUGINS'] != "1"
     Dir[File.join(Rails.root, "plugins", "*", "config", "settings.yml")].each do |file|
@@ -68,11 +69,6 @@ class SiteSetting < ActiveRecord::Base
     @anonymous_menu_items ||= Set.new Discourse.anonymous_filters.map(&:to_s)
   end
 
-  def self.normalized_embeddable_host
-    return embeddable_host if embeddable_host.blank?
-    embeddable_host.sub(/^https?\:\/\//, '')
-  end
-
   def self.anonymous_homepage
     top_menu_items.map { |item| item.name }
                   .select { |item| anonymous_menu_items.include?(item) }
@@ -90,20 +86,37 @@ class SiteSetting < ActiveRecord::Base
   end
 
   def self.scheme
-    use_https? ? "https" : "http"
+    force_https? ? "https" : "http"
   end
 
-  def self.has_enough_topics_to_redirect_to_top
-    TopTopic.periods.each do |period|
-      topics_per_period = TopTopic.where("#{period}_score > 0")
-                                  .limit(SiteSetting.topics_per_period_in_top_page)
-                                  .count
-      return true if topics_per_period >= SiteSetting.topics_per_period_in_top_page
-    end
-    # nothing
-    false
+  def self.default_categories_selected
+    [
+      SiteSetting.default_categories_watching.split("|"),
+      SiteSetting.default_categories_tracking.split("|"),
+      SiteSetting.default_categories_muted.split("|"),
+      SiteSetting.default_categories_watching_first_post.split("|")
+    ].flatten.to_set
   end
 
+  def self.min_redirected_to_top_period(duration)
+    period = ListController.best_period_with_topics_for(duration)
+    return period if period
+
+    # not enough topics
+    nil
+  end
+
+  def self.email_polling_enabled?
+    SiteSetting.manual_polling_enabled? || SiteSetting.pop3_polling_enabled?
+  end
+
+  def self.attachment_content_type_blacklist_regex
+    @attachment_content_type_blacklist_regex ||= Regexp.union(SiteSetting.attachment_content_type_blacklist.split("|"))
+  end
+
+  def self.attachment_filename_blacklist_regex
+    @attachment_filename_blacklist_regex ||= Regexp.union(SiteSetting.attachment_filename_blacklist.split("|"))
+  end
 end
 
 # == Schema Information
@@ -111,7 +124,7 @@ end
 # Table name: site_settings
 #
 #  id         :integer          not null, primary key
-#  name       :string(255)      not null
+#  name       :string           not null
 #  data_type  :integer          not null
 #  value      :text
 #  created_at :datetime         not null

@@ -11,6 +11,7 @@ module Middleware
     class Helper
       USER_AGENT = "HTTP_USER_AGENT".freeze
       RACK_SESSION = "rack.session".freeze
+      ACCEPT_ENCODING = "HTTP_ACCEPT_ENCODING".freeze
 
       def initialize(env)
         @env = env
@@ -35,6 +36,14 @@ module Middleware
         @is_mobile == :true
       end
 
+      def has_brotli?
+        @has_brotli ||=
+          begin
+            @env[ACCEPT_ENCODING].to_s =~ /br/ ? :true : :false
+          end
+        @has_brotli == :true
+      end
+
       def is_crawler?
         @is_crawler ||=
           begin
@@ -45,7 +54,7 @@ module Middleware
       end
 
       def cache_key
-        @cache_key ||= "ANON_CACHE_#{@env["HTTP_ACCEPT"]}_#{@env["HTTP_HOST"]}#{@env["REQUEST_URI"]}|m=#{is_mobile?}|c=#{is_crawler?}"
+        @cache_key ||= "ANON_CACHE_#{@env["HTTP_ACCEPT"]}_#{@env["HTTP_HOST"]}#{@env["REQUEST_URI"]}|m=#{is_mobile?}|c=#{is_crawler?}|b=#{has_brotli?}"
       end
 
       def cache_key_body
@@ -64,8 +73,13 @@ module Middleware
         CurrentUser.has_auth_cookie?(@env)
       end
 
+      def no_cache_bypass
+        request = Rack::Request.new(@env)
+        request.cookies['_bypass_cache'].nil?
+      end
+
       def cacheable?
-        !!(!has_auth_cookie? && get?)
+        !!(!has_auth_cookie? && get? && no_cache_bypass)
       end
 
       def cached
@@ -89,6 +103,7 @@ module Middleware
 
         if status == 200 && cache_duration
           headers_stripped = headers.dup.delete_if{|k, _| ["Set-Cookie","X-MiniProfiler-Ids"].include? k}
+          headers_stripped["X-Discourse-Cached"] = "true"
           parts = []
           response.each do |part|
             parts << part

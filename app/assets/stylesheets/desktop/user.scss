@@ -13,16 +13,14 @@
   transition: height .15s linear;
 }
 
-
 .no-background {
   .profile-image {
     height: 200px;
   }
-
 }
 
 .user-preferences {
-  input.category-group, input.user-selector {
+  input.category-selector, input.user-selector {
     width: 530px;
   }
 
@@ -31,24 +29,10 @@
     height: 100px;
   }
 
-  input
-
   input[type=text] {
     @include small-width {
       width: 450px;
     }
-  }
-
-  #pagedown-editor {
-    width: 450px;
-
-    textarea {
-      width: 440px;
-    }
-  }
-
-  .bio-composer #wmd-quote-post {
-    display: none;
   }
 
   .static {
@@ -56,7 +40,7 @@
     display: inline-block;
   }
   .instructions {
-    color: scale-color($primary, $lightness: 50%);
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
     margin-left: 160px;
     margin-top: 5px;
     margin-bottom: 10px;
@@ -76,6 +60,12 @@
     width: 520px;
   }
 
+  .pref-mailing-list-mode .controls {
+    select {
+      width: 400px;
+    }
+  }
+
   .other .controls {
     select {
       width: 280px;
@@ -91,11 +81,23 @@
   margin-top: 18px;
 }
 
+.user-table {
+  margin-top: 30px;
+  width: 100%;
+}
+
+.user-navigation .nav-stacked .glyph {
+  display: none;
+  // float: right;
+  // display: block;
+  // position: static;
+}
+
 .user-navigation {
-  width: 21.62%;
-  margin-right: 1.8018%;
-  float: left;
-  margin-top: 20px;
+  display: table-cell;
+  vertical-align: top;
+  width: 170px;
+  padding-right: 30px;
 
   h3 {
     color: $primary;
@@ -104,48 +106,38 @@
 
 }
 
+.viewing-self .user-main .about.collapsed-info {
+  .secondary, .staff-counters {
+    display: inherit;
+  }
+}
+
 .user-main {
   margin-bottom: 50px;
 
-  table.group-members {
-    width: 100%;
-    p {
-      max-width: 600px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+  // name hacky so lastpass does not freak out
+  // -search- means it is bypassed
+  #add-user-to-group {
+    button, .ac-wrap {
+      float: left;
     }
-    th.seen {
-      text-align: right;
+    button {
+      margin-top: 5px;
     }
-    td.avatar {
-      width: 60px;
+    #user-search-selector {
+      width: 400px;
     }
-    td {
-      img {
-        margin-right: 10px;
-      }
-      span.last-seen-at {
-        float: right;
-        color: $primary;
-      }
-    }
-  }
-
-  .user-right.groups {
-    margin-top: 0;
-  }
+   }
 
   .user-right {
-    width: 75%;
-    float: right;
+    width: 900px;
     margin-top: 20px;
+    display: table-cell;
   }
 
   .user-content {
     padding: 10px 8px;
     background-color: $secondary;
-    border: 1px solid scale-color-diff();
     margin-bottom: 10px;
     box-sizing: border-box;
 
@@ -157,19 +149,21 @@
       margin-bottom: 10px;
     }
 
-    table {
+    .user-invite-list {
       width: 100%;
-      margin-top: 10px;
+      margin-top: 15px;
 
       th {
         text-align: left;
-        border-bottom: 1px solid scale-color-diff();
-        padding: 5px;
+        border-bottom: 3px solid dark-light-diff($primary, $secondary, 90%, -60%);
+        padding: 0 0 10px 0;
+        color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
+        font-weight: normal;
       }
 
       td {
-        padding: 5px;
-        border-bottom: 1px solid scale-color-diff();
+        padding: 10px 0 10px 0;
+        border-bottom: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
       }
     }
 
@@ -179,25 +173,42 @@
         max-height: 45px;
       }
     }
+
+    .user-invite-controls {
+      background-color: dark-light-diff($primary, $secondary, 90%, -75%);
+      padding: 5px 10px 0px 0;
+      height: 35px;
+    }
+
+    .user-invite-search {
+      clear: both;
+      margin: 15px 0px -15px 0px;
+    }
+
+    .user-invite-none {
+      clear: both;
+      padding: 15px;
+    }
   }
 
   .about {
     background-position: center center;
     background-size: cover;
     width: 100%;
-    margin-bottom: 10px;
     overflow: hidden;
-    color: $secondary;
 
     &.group {
       .details {
-        padding: 15px;
+        padding: 15px 0px;
         margin: 0;
+        color: dark-light-choose(lighten($primary, 10%), $secondary);
       }
     }
 
   .secondary {
-    background: dark-light-diff($primary, $secondary, 90%, -65%);
+    background: scale-color($secondary, $lightness: -5%);
+    border-top: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
+    border-bottom: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
     font-size: 0.929em;
       .btn { padding: 3px 12px; }
 
@@ -240,10 +251,15 @@
     }
 
     .details {
-      padding: 15px 15px 4px 15px;
+      padding: 0 0 4px 0;
+      background: rgba($secondary, .85);
       margin-top: -200px;
-      background: rgba($primary, .85);
       transition: margin .15s linear;
+
+      blockquote {
+        background-color: dark-light-diff($secondary, $primary, 30%, -70%);
+        border-left-color: dark-light-diff($secondary, $primary, 50%, -50%);
+      }
 
       h1 {
         font-size: 2.143em;
@@ -289,31 +305,27 @@
         width: 100%;
         position: relative;
         float: left;
-        color: $secondary;
 
         h1 {font-weight: bold;}
 
         .primary-textual {
           padding: 3px;
           a[href] {
-            color: $secondary;
-
+            text-decoration: underline;
           }
         }
 
         .bio {
-          color: $secondary;
           max-height: 300px;
           overflow: auto;
           max-width: 750px;
 
-          a.mention {
-            background-color: dark-light-diff($secondary, $primary, 20%, -50%);
+          a[href] {
+            text-decoration: underline;
           }
 
-          a[href] {
-            color: dark-light-diff($secondary, $primary, 75%, 0%);
-            text-decoration: underline;
+          a.mention {
+            text-decoration: none;
           }
 
           img {
@@ -322,6 +334,9 @@
         }
       }
     }
+        &.has-background {
+          .details { padding: 15px 15px 4px 15px;}
+        }
 
     .controls {
       padding: 0 0 12px 0;
@@ -333,7 +348,7 @@
         padding: 5px 10px;
         width: 140px;
         margin-bottom: 10px;
-        }
+      }
 
       .right {
         float: right;
@@ -367,9 +382,10 @@
     }
 
     .details {
-      padding: 12px 15px 2px 15px;
+      padding: 0 0 2px 0;
       margin-top: 0;
-      background: rgba($primary, 1);
+      background: rgba($secondary, .85);
+      border-bottom: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
       .bio { display: none; }
 
       .primary {
@@ -398,13 +414,14 @@
         }
       }
     }
+
+    &.has-background {
+      .details {  padding: 12px 15px 2px 15px;}
+    }
+
   }
 
-
   .user-stream {
-    .category {
-      margin-left: 3px;
-    }
     .excerpt {
       margin: 5px 0;
       font-size: 0.929em;
@@ -425,7 +442,7 @@
     .item {
       padding: 20px 8px 15px 8px;
       background-color: $secondary;
-      border-bottom: 1px solid scale-color-diff();
+      border-bottom: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
     }
     .type {
       color: $primary;
@@ -448,10 +465,10 @@
       margin-right: 4px;
     }
     .title {
-      font-size: 1em;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      display: block;
     }
     .name {
       font-size: 1em;
@@ -461,7 +478,7 @@
       text-overflow: ellipsis;
     }
     .edit-reason {
-      background-color: scale-color($highlight, $lightness: 25%);
+      background-color: dark-light-choose(scale-color($highlight, $lightness: 25%), scale-color($highlight, $lightness: -50%));
       padding: 3px 5px 5px 5px;
     }
     .remove-bookmark {
@@ -488,8 +505,20 @@
       }
       // common/base/header.scss
       .fa, .icon {
-        color: scale-color($primary, $lightness: 50%);
+        color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
         font-size: 1.714em;
+      }
+    }
+    .group-member-info {
+      .name {
+        display: inline-block;
+        margin-top: 5px;
+        color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
+      }
+      .title {
+        display: inline-block;
+        margin-top: 5px;
+        color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
       }
     }
   }
@@ -497,21 +526,22 @@
   .staff-counters {
     text-align: left;
     background: $primary;
+    color: $secondary;
+    margin-bottom: 20px;
+    a {
+      color: $secondary;
+    }
     > div {
       margin: 0 10px 0 0;
       display: inline-block;
       padding: 5px 0;
       &:first-of-type {
         padding-left: 10px;
-        }
+      }
       span {
         padding: 1px 5px;
         border-radius: 10px;
-        }
-
-    }
-    a {
-      color: $secondary;
+      }
     }
     .active {
       font-weight: bold;
@@ -565,7 +595,7 @@
         float: auto;
       }
       p {
-        color: scale-color($primary, $lightness: 50%);
+        color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
         margin-top: 5px;
         margin-bottom: 10px;
         font-size: 80%;
@@ -575,11 +605,50 @@
     clear: both;
     margin-bottom: 10px;
   }
+  .group-notification-menu .dropdown-menu {
+    top: 30px;
+    bottom: auto;
+    left: auto;
+    right: 10px;
+  }
 }
 
 .paginated-topics-list {
   .user-content {
     width: 100%;
     margin-top: 0;
+  }
+}
+
+.user-right .group-notification-menu {
+  float: right;
+  margin-bottom: 5px;
+}
+
+.user-main .nav-stacked {
+  &.activity-list {
+    padding-top: 20px;
+  }
+  background-color: transparent;
+
+  li {
+    border-bottom: none;
+    > a {
+      padding: 8px 13px;
+      color: dark-light-choose(scale-color($primary, $lightness: 40%), scale-color($secondary, $lightness: 40%));
+    }
+  }
+
+  li > a.active {
+    color: $primary;
+    font-weight: bold;
+    background-color: transparent;
+  }
+  li > a.active:after {
+    display: none;
+  }
+
+  li.archive {
+    padding-left: 15px;
   }
 }

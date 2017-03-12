@@ -36,10 +36,10 @@
 
 .topic-list {
   margin: 0 0 10px;
-  .fa-thumb-tack { color: scale-color($primary, $lightness: 50%); }
-  .fa-thumb-tack.unpinned { color: scale-color($primary, $lightness: 50%); }
+  .fa-thumb-tack { color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%)); }
+  .fa-thumb-tack.unpinned { color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%)); }
   a.title {color: $primary;}
-  .fa-bookmark { color: scale-color($primary, $lightness: 50%); }
+  .fa-bookmark { color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%)); }
   th,
   td {
     padding: 12px 5px;
@@ -51,19 +51,19 @@
     }
   }
   th {
-    button i.fa {color: scale-color($primary, $lightness: 50%);}
+    button i.fa {color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%)); }
   }
 
   > tbody > tr {
     &.highlighted {
-        background-color: dark-light-diff($tertiary, $secondary, 85%, -65%);
+      animation: background-fade-highlight 2.5s ease-out;
     }
   }
   button.bulk-select {
     padding: 0;
     background: transparent;
     &:hover {
-      color: scale-color-diff();
+      color: dark-light-diff($primary, $secondary, 90%, -60%);
     }
   }
 
@@ -132,7 +132,7 @@
   .post-actions {
     clear: both;
     width: auto;
-    color: scale-color($primary, $lightness: 50%);
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
     text-align: left;
     font-size: 12px;
     margin-top: 5px;
@@ -141,7 +141,7 @@
     }
     a {
       font-size: 11px;
-      color: scale-color($primary, $lightness: 50%);
+      color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
       margin-right: 3px;
       line-height: 20px;
     }
@@ -182,8 +182,7 @@
   }
   td.latest {
     vertical-align: top;
-    padding: 8px;
-    padding-top: 0;
+    padding: 0 8px 8px;
   }
   .last-user-info {
     font-size: 0.857em;
@@ -194,8 +193,6 @@
     }
   }
   .category{
-    width: 45%;
-
     h3 {
       display: inline-block;
       font-size: 1.286em;
@@ -221,11 +218,11 @@
     margin: 10px 0 0;
     /* topic status glyphs */
     i {
-      color: scale-color($primary, $lightness: 50%) !important;
+      color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%)) !important;
       font-size: 0.929em;
     }
     a.last-posted-at, a.last-posted-at:visited {
-      color: scale-color($primary, $lightness: 50%);
+      color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
       font-size: 0.88em;
     }
     .badge {
@@ -242,7 +239,10 @@
 // Misc. stuff
 // --------------------------------------------------
 
-#list-area .top-lists h2 { margin: 5px 0 10px; }
+#list-area .top-lists h2 {
+  cursor: pointer;
+  margin: 5px 0 10px;
+}
 
 #list-area {
   h2 {
@@ -258,8 +258,10 @@
 #bulk-select {
   position: fixed;
   right: 20px;
+  top: 130px;
   padding: 5px;
   background-color: $secondary;
+  z-index: 99999;
 }
 
 button.dismiss-read {
@@ -268,11 +270,13 @@ button.dismiss-read {
   margin-left: 10px;
 }
 
-.category-notification-menu .dropdown-menu {
-  right: 0;
-  top: 30px;
-  bottom: auto;
-  left: auto;
+.category-notification-menu, .tags-admin-menu {
+  .dropdown-menu {
+    right: 0;
+    top: 30px;
+    bottom: auto;
+    left: auto;
+  }
 }
 
 .category-heading {
@@ -281,6 +285,10 @@ button.dismiss-read {
     line-height: 1.5em;
     font-size: 1.5em;
   }
+}
+
+.category-navigation {
+  clear: both;
 }
 
 .category-logo {
@@ -295,15 +303,7 @@ button.dismiss-read {
 @media all
 and (max-width : 850px) {
 
-  // add some left padding to topics otherwise everything is 100% flush
-  // with left edge in portrait tablet, which looks awful
-  #topic-title {
-    padding-left: 10px;
-  }
-  .container.posts {
-    padding-left: 10px;
-  }
-
+  // slightly smaller font, tighten spacing on nav pills
   .nav-pills {
     > li > a {
       font-size: 1em;
@@ -311,61 +311,32 @@ and (max-width : 850px) {
       }
   }
 
-  .list-controls {
-    padding: 0 5px;
-
-    .btn {
-        font-size: 1em
-      }
-
-    .category-dropdown-menu {
-        min-width: 139px;
-      }
-
-    a.badge-category {
-        font-size: 1em;
-      }
-
-  }
-
   .topic-list {
-    .categories td.category {
-      padding-left: 10px;
-      }
+
+    // tighter table header spacing
    th:first-of-type {
      padding: 12px 5px;
      }
-   th {
-     .btn .fa {
-       margin-right: 2px;
-       }
-     }
+   // smaller table cell font and cell spacing
    th, td {
       padding: 12px 2px;
       font-size: 0.929em;
      }
-    .star {
-      padding: 12px 5px;
-      width: auto;
-      }
     .main-link {
       font-size: 1.071em;
-      padding: 12px 8px 12px 0px;
-      }
-
-    .likes {
-      width: auto;
       }
     .category {
       min-width: 0;
       padding: 0;
       }
-    .topic-excerpt {
-      padding-right: 20px;
-      }
-    th.posters {
-      text-align: center;
-      }
+    // suppress views column
+    th.views {
+      display: none;
+    }
+    td.views {
+      display: none;
+    }
+    // show only the first poster
     .posters {
        min-width: 0;
        width: 50px;
@@ -375,6 +346,6 @@ and (max-width : 850px) {
        a.latest {
          padding: 0 8px;
          }
-       }
+    }
   }
 }

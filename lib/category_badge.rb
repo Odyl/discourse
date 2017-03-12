@@ -45,12 +45,19 @@ module CategoryBadge
       end
     end
 
+    show_parent = category.parent_category_id && !opts[:hide_parent]
+
     # sub parent or main category span
     result << if opts[:inline_style]
       case (SiteSetting.category_style || :box).to_sym
       when :bar then inline_category_stripe(category.color, 'display: inline-block; padding: 1px;', true)
-      when :box then inline_category_stripe(category.color, 'left: 5px; display: block; position: absolute; width: calc(100% - 5px); height: 100%;')
-      when :bullet then inline_category_stripe(category.color, "display: inline-block; width: #{category.parent_category_id.nil? ? 10 : 5}px; height: 10px;", true)
+      when :box
+        unless show_parent
+          inline_category_stripe(category.color, 'display: block; position: absolute; width: 100%; height: 100%;')
+        else
+          inline_category_stripe(category.color, 'left: 5px; display: block; position: absolute; width: calc(100% - 5px); height: 100%;')
+        end
+      when :bullet then inline_category_stripe(category.color, "display: inline-block; width: #{category.parent_category_id.nil? ? 10 : 5}px; height: 10px;")
       end
     else
       category_stripe(category.color, 'badge-category-bg')
@@ -60,12 +67,12 @@ module CategoryBadge
     class_names = 'badge-category clear-badge'
     text_color = "##{category.text_color}"
     description = category.description_text ? "title='#{category.description_text.html_safe}'" : ''
-    category_url = opts[:absolute_url] ? "#{Discourse.base_url}#{category.url}" : category.url
+    category_url = opts[:absolute_url] ? "#{Discourse.base_url_no_prefix}#{category.url}" : category.url
 
     extra_span_classes = if opts[:inline_style]
         case (SiteSetting.category_style || :box).to_sym
         when :bar then 'padding: 3px; color: #222222 !important; vertical-align: text-top; margin-top: -3px; display: inline-block;'
-        when :box then 'margin-left: 5px; position: relative; padding: 0 5px; margin-top: 2px;'
+        when :box then "#{show_parent ? 'margin-left: 5px; ' : ''} position: relative; padding: 0 5px; margin-top: 2px;"
         when :bullet then 'color: #222222 !important; vertical-align: text-top; line-height: 1; margin-left: 4px; padding-left: 2px; display: inline;'
         end + 'max-width: 150px; overflow: hidden; text-overflow: ellipsis;'
       else

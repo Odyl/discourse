@@ -4,7 +4,8 @@ require_dependency 'file_helper'
 module Jobs
 
   class PullHotlinkedImages < Jobs::Base
-    include UrlHelper
+
+    sidekiq_options queue: 'low'
 
     def initialize
       # maximum size of the file in bytes
@@ -25,7 +26,7 @@ module Jobs
       downloaded_urls = {}
 
       extract_images_from(post.cooked).each do |image|
-        src = image['src']
+        src = original_src = image['src']
         src = "http:" + src if src.start_with?("//")
 
         if is_valid_image_url(src)
@@ -34,25 +35,25 @@ module Jobs
             # have we already downloaded that file?
             unless downloaded_urls.include?(src)
               begin
-                hotlinked = FileHelper.download(src, @max_size, "discourse-hotlinked")
+                hotlinked = FileHelper.download(src, @max_size, "discourse-hotlinked", true)
               rescue Discourse::InvalidParameters
               end
               if hotlinked
-                if hotlinked.size <= @max_size
+                if File.size(hotlinked.path) <= @max_size
                   filename = File.basename(URI.parse(src).path)
-                  upload = Upload.create_for(post.user_id, hotlinked, filename, hotlinked.size, { origin: src })
+                  upload = Upload.create_for(post.user_id, hotlinked, filename, File.size(hotlinked.path), { origin: src })
                   downloaded_urls[src] = upload.url
                 else
-                  Rails.logger.error("Failed to pull hotlinked image: #{src} - Image is bigger than #{@max_size}")
+                  Rails.logger.info("Failed to pull hotlinked image for post: #{post_id}: #{src} - Image is bigger than #{@max_size}")
                 end
               else
-                Rails.logger.error("There was an error while downloading '#{src}' locally.")
+                Rails.logger.error("There was an error while downloading '#{src}' locally for post: #{post_id}")
               end
             end
             # have we successfully downloaded that file?
             if downloaded_urls[src].present?
               url = downloaded_urls[src]
-              escaped_src = Regexp.escape(src)
+              escaped_src = Regexp.escape(original_src)
               # there are 6 ways to insert an image in a post
               # HTML tag - <img src="http://...">
               raw.gsub!(/src=["']#{escaped_src}["']/i, "src='#{url}'")
@@ -62,13 +63,17 @@ module Jobs
               raw.gsub!(/\[!\[([^\]]*)\]\(#{escaped_src}\)\]/) { "[<img src='#{url}' alt='#{$1}'>]" }
               # Markdown inline - ![alt](http://...)
               raw.gsub!(/!\[([^\]]*)\]\(#{escaped_src}\)/) { "![#{$1}](#{url})" }
+              # Markdown inline - ![](http://... "image title")
+              raw.gsub!(/!\[\]\(#{escaped_src} "([^\]]*)"\)/) { "![](#{url})" }
+              # Markdown inline - ![alt](http://... "image title")
+              raw.gsub!(/!\[([^\]]*)\]\(#{escaped_src} "([^\]]*)"\)/) { "![](#{url})" }
               # Markdown reference - [x]: http://
-              raw.gsub!(/\[(\d+)\]: #{escaped_src}/) { "[#{$1}]: #{url}" }
+              raw.gsub!(/\[([^\]]+)\]:\s?#{escaped_src}/) { "[#{$1}]: #{url}" }
               # Direct link
-              raw.gsub!(src, "<img src='#{url}'>")
+              raw.gsub!(/^#{escaped_src}(\s?)$/) { "<img src='#{url}'>#{$1}" }
             end
           rescue => e
-            Rails.logger.error("Failed to pull hotlinked image: #{src}\n" + e.message + "\n" + e.backtrace.join("\n"))
+            Rails.logger.info("Failed to pull hotlinked image: #{src} post:#{post_id}\n" + e.message + "\n" + e.backtrace.join("\n"))
           ensure
             # close & delete the temp file
             hotlinked && hotlinked.close!
@@ -78,12 +83,7 @@ module Jobs
       end
 
       post.reload
-      if start_raw != post.raw
-        # post was edited - start over (after 10 minutes)
-        backoff = args.fetch(:backoff, 1) + 1
-        delay = SiteSetting.ninja_edit_window * args[:backoff]
-        Jobs.enqueue_in(delay.seconds.to_i, :pull_hotlinked_images, args.merge!(backoff: backoff))
-      elsif raw != post.raw
+      if start_raw == post.raw && raw != post.raw
         changes = { raw: raw, edit_reason: I18n.t("upload.edit_reason") }
         # we never want that job to bump the topic
         options = { bypass_bump: true }

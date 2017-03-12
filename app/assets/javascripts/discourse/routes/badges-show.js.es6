@@ -1,43 +1,49 @@
-import ShowFooter from "discourse/mixins/show-footer";
+import UserBadge from 'discourse/models/user-badge';
+import Badge from 'discourse/models/badge';
+import PreloadStore from 'preload-store';
 
-export default Discourse.Route.extend(ShowFooter, {
+export default Discourse.Route.extend({
+  queryParams: {
+    username: {
+      refreshModel: true
+    }
+  },
   actions: {
-    didTransition: function() {
+    didTransition() {
       this.controllerFor("badges/show")._showFooter();
       return true;
     }
   },
 
-  serialize: function(model) {
-    return {id: model.get('id'), slug: model.get('name').replace(/[^A-Za-z0-9_]+/g, '-').toLowerCase()};
+  serialize(model) {
+    return model.getProperties('id', 'slug');
   },
 
-  model: function(params) {
-    if (PreloadStore.get('badge')) {
-      return PreloadStore.getAndRemove('badge').then(function(json) {
-        return Discourse.Badge.createFromJson(json);
-      });
+  model(params) {
+    if (PreloadStore.get("badge")) {
+      return PreloadStore.getAndRemove("badge").then(json => Badge.createFromJson(json));
     } else {
-      return Discourse.Badge.findById(params.id);
+      return Badge.findById(params.id);
     }
   },
 
-  afterModel: function(model) {
-    var self = this;
-    return Discourse.UserBadge.findByBadgeId(model.get('id')).then(function(userBadges) {
-      self.userBadges = userBadges;
+  afterModel(model, transition) {
+    const username = transition.queryParams && transition.queryParams.username;
+
+    return UserBadge.findByBadgeId(model.get("id"), {username}).then(userBadges => {
+      this.userBadges = userBadges;
     });
   },
 
-  titleToken: function() {
-    var model = this.modelFor('badges.show');
+  titleToken() {
+    const model = this.modelFor("badges.show");
     if (model) {
-      return model.get('displayName');
+      return model.get("name");
     }
   },
 
-  setupController: function(controller, model) {
-    controller.set('model', model);
-    controller.set('userBadges', this.userBadges);
+  setupController(controller, model) {
+    controller.set("model", model);
+    controller.set("userBadges", this.userBadges);
   }
 });

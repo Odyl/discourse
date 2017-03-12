@@ -9,20 +9,26 @@ es:
   js:
     poll:
       voters:
-        zero: "votantes"
         one: "votante"
         other: "votantes"
       total_votes:
-        zero: "total votos"
-        one: "total voto"
-        other: "total votos"
+        one: "voto total"
+        other: "votos totales"
       average_rating: "Puntuación media: <strong>%{average}</strong>."
+      public:
+        title: "Los votos son públicos."
       multiple:
         help:
-          at_least_min_options: "Puedes escoger como mínimo <strong>%{count}</strong> opciones."
-          up_to_max_options: "Puedes escoger hasta <strong>%{count}</strong> opciones."
-          x_options: "Puedes escoger <strong>%{count}</strong> opciones."
-          between_min_and_max_options: "Puedes escoger entre <strong>%{min}</strong> y <strong>%{max}</strong> opciones."
+          at_least_min_options:
+            one: "Elige al menos <strong>1</strong> opción"
+            other: "Elige al menos <strong>%{count}</strong> opciones"
+          up_to_max_options:
+            one: "Elige <strong>1</strong> opción"
+            other: "Elige hasta <strong>%{count}</strong> opciones"
+          x_options:
+            one: "Elige <strong>1</strong> opción"
+            other: "Elige <strong>%{count}</strong> opciones"
+          between_min_and_max_options: "Elige entre <strong>%{min}</strong> y <strong>%{max}</strong> opciones"
       cast-votes:
         title: "Votar"
         label: "¡Vota!"
@@ -40,5 +46,24 @@ es:
         title: "Cerrar la encuesta"
         label: "Cerrar"
         confirm: "¿Seguro que quieres cerrar esta encuesta?"
-      error_while_toggling_status: "Ha ocurrido un error mientras se cambiaba el estado de esta encuesta."
-      error_while_casting_votes: "Ha ocurrido un error a la hora de enviar los votos."
+      error_while_toggling_status: "Lo sentimos, hubo un error al cambiar el estado de esta encuesta."
+      error_while_casting_votes: "Lo sentimos, hubo un error al registrar tus votos."
+      error_while_fetching_voters: "Lo sentimos, hubo un error al mostrar los votantes."
+      ui_builder:
+        title: Crear Encuesta
+        insert: Insertar Encuesta
+        help:
+          options_count: Introducir al menos 2 opciones
+        poll_type:
+          label: Tipo
+          regular: Una opción
+          multiple: Múltiples opciones
+          number: Valoración numérica
+        poll_config:
+          max: Máximo
+          min: Mínimo
+          step: Intervalo
+        poll_public:
+          label: Mostrar quién votó
+        poll_options:
+          label: Introducir una opción de la encuesta por línea

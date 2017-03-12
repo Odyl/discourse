@@ -10,26 +10,57 @@ class AdminUserIndexQuery
 
   attr_reader :params, :trust_levels
 
+  SORTABLE_MAPPING = {
+    'created' => 'created_at',
+    'last_emailed' => "COALESCE(last_emailed_at, to_date('1970-01-01', 'YYYY-MM-DD'))",
+    'seen' => "COALESCE(last_seen_at, to_date('1970-01-01', 'YYYY-MM-DD'))",
+    'username' => 'username',
+    'email' => 'email',
+    'trust_level' => 'trust_level',
+    'days_visited' => 'user_stats.days_visited',
+    'posts_read' => 'user_stats.posts_read_count',
+    'topics_viewed' => 'user_stats.topics_entered',
+    'posts' => 'user_stats.post_count',
+    'read_time' => 'user_stats.time_read'
+  }
+
   def find_users(limit=100)
-    find_users_query.includes(:user_stat).limit(limit)
+    find_users_query.limit(limit)
   end
 
   def count_users
     find_users_query.count
   end
 
-  def initialize_query_with_order(klass)
-    order = [params[:order]]
+  def custom_direction
+    asc = params[:ascending]
+    asc.present? && asc ? "ASC" : "DESC"
+  end
 
-    if params[:query] == "active"
-      order << "COALESCE(last_seen_at, to_date('1970-01-01', 'YYYY-MM-DD')) DESC"
-    else
-      order << "users.created_at DESC"
+  def initialize_query_with_order(klass)
+    order = []
+
+    custom_order = params[:order]
+    if custom_order.present? &&
+      without_dir = SORTABLE_MAPPING[custom_order.downcase.sub(/ (asc|desc)$/, '')]
+      order << "#{without_dir} #{custom_direction}"
     end
 
-    order << "users.username"
+    if !custom_order.present?
+      if params[:query] == "active"
+        order << "COALESCE(last_seen_at, to_date('1970-01-01', 'YYYY-MM-DD')) DESC"
+      else
+        order << "users.created_at DESC"
+      end
 
-    klass.order(order.reject(&:blank?).join(","))
+      order << "users.username"
+    end
+
+    if params[:stats].present? && params[:stats] == false
+      klass.order(order.reject(&:blank?).join(","))
+    else
+      klass.includes(:user_stat).order(order.reject(&:blank?).join(","))
+    end
   end
 
   def filter_by_trust
@@ -67,6 +98,7 @@ class AdminUserIndexQuery
 
   def filter_by_search
     if params[:filter].present?
+      params[:filter].strip!
       if ip = IPAddr.new(params[:filter]) rescue nil
         @query.where('ip_address <<= :ip OR registration_ip_address <<= :ip', ip: ip.to_cidr_s)
       else
@@ -77,7 +109,7 @@ class AdminUserIndexQuery
 
   def filter_by_ip
     if params[:ip].present?
-      @query.where('ip_address = :ip OR registration_ip_address = :ip', ip: params[:ip])
+      @query.where('ip_address = :ip OR registration_ip_address = :ip', ip: params[:ip].strip)
     end
   end
 

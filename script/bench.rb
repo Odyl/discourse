@@ -104,11 +104,6 @@ unless File.exists?("config/database.yml")
   `cp config/database.yml.development-sample config/database.yml`
 end
 
-unless File.exists?("config/redis.yml")
-  puts "Copying redis.yml.sample to redis.yml"
-  `cp config/redis.yml.sample config/redis.yml`
-end
-
 ENV["RAILS_ENV"] = "profile"
 
 
@@ -116,7 +111,6 @@ discourse_env_vars = %w(DISCOURSE_DUMP_HEAP RUBY_GC_HEAP_INIT_SLOTS RUBY_GC_HEAP
 
 if @include_env
   puts "Running with tuned environment"
-  ENV["RUBY_GC_MALLOC_LIMIT"] = "50_000_000"
   discourse_env_vars - %w(RUBY_GC_MALLOC_LIMIT).each do |v|
     ENV.delete v
   end
@@ -225,6 +219,9 @@ begin
 
   puts "Your Results: (note for timings- percentile is first, duration is second in millisecs)"
 
+  # Prevent using external facts because it breaks when running in the
+  # discourse/discourse_bench docker container.
+  Facter::Util::Config.external_facts_dirs = []
   facts = Facter.to_hash
 
   facts.delete_if{|k,v|
@@ -276,8 +273,6 @@ begin
     end
   end
 
-
-  # TODO include Facter.to_hash ... for all facts
 ensure
   Process.kill "KILL", pid
 end

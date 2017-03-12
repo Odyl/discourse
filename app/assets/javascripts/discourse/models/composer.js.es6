@@ -1,6 +1,11 @@
 import RestModel from 'discourse/models/rest';
 import Topic from 'discourse/models/topic';
 import { throwAjaxError } from 'discourse/lib/ajax-error';
+import Quote from 'discourse/lib/quote';
+import Draft from 'discourse/models/draft';
+import computed from 'ember-addons/ember-computed-decorators';
+import { escapeExpression, tinyAvatar } from 'discourse/lib/utilities';
+import { emojiUnescape } from 'discourse/lib/text';
 
 const CLOSED = 'closed',
       SAVING = 'saving',
@@ -13,36 +18,74 @@ const CLOSED = 'closed',
       REPLY = 'reply',
       EDIT = 'edit',
       REPLY_AS_NEW_TOPIC_KEY = "reply_as_new_topic",
+      REPLY_AS_NEW_PRIVATE_MESSAGE_KEY = "reply_as_new_private_message",
 
       // When creating, these fields are moved into the post model from the composer model
       _create_serializer = {
         raw: 'reply',
         title: 'title',
+        unlist_topic: 'unlistTopic',
         category: 'categoryId',
         topic_id: 'topic.id',
         is_warning: 'isWarning',
+        whisper: 'whisper',
         archetype: 'archetypeId',
-        target_usernames: 'targetUsernames'
+        target_usernames: 'targetUsernames',
+        typing_duration_msecs: 'typingTime',
+        composer_open_duration_msecs: 'composerTime',
+        tags: 'tags',
+        featured_link: 'featuredLink'
       },
 
       _edit_topic_serializer = {
         title: 'topic.title',
-        categoryId: 'topic.category.id'
+        categoryId: 'topic.category.id',
+        tags: 'topic.tags',
+        featuredLink: 'topic.featured_link'
       };
 
 const Composer = RestModel.extend({
+  _categoryId: null,
+  unlistTopic: false,
 
   archetypes: function() {
     return this.site.get('archetypes');
   }.property(),
 
+
+  @computed
+  categoryId: {
+    get() { return this._categoryId; },
+
+    // We wrap categoryId this way so we can fire `applyTopicTemplate` with
+    // the previous value as well as the new value
+    set(categoryId) {
+      const oldCategoryId = this._categoryId;
+
+      if (Ember.isEmpty(categoryId)) { categoryId = null; }
+      this._categoryId = categoryId;
+
+      if (oldCategoryId !== categoryId) {
+        this.applyTopicTemplate(oldCategoryId, categoryId);
+      }
+      return categoryId;
+    }
+  },
+
   creatingTopic: Em.computed.equal('action', CREATE_TOPIC),
   creatingPrivateMessage: Em.computed.equal('action', PRIVATE_MESSAGE),
   notCreatingPrivateMessage: Em.computed.not('creatingPrivateMessage'),
 
-  privateMessage: function(){
-    return this.get('creatingPrivateMessage') || this.get('topic.archetype') === 'private_message';
-  }.property('creatingPrivateMessage', 'topic'),
+  @computed("privateMessage", "archetype.hasOptions")
+  showCategoryChooser(isPrivateMessage, hasOptions) {
+    const manyCategories = Discourse.Category.list().length > 1;
+    return !isPrivateMessage && (hasOptions || manyCategories);
+  },
+
+  @computed("creatingPrivateMessage", "topic")
+  privateMessage(creatingPrivateMessage, topic) {
+    return creatingPrivateMessage || (topic && topic.get('archetype') === 'private_message');
+  },
 
   topicFirstPost: Em.computed.or('creatingTopic', 'editingFirstPost'),
 
@@ -52,28 +95,76 @@ const Composer = RestModel.extend({
   viewOpen: Em.computed.equal('composeState', OPEN),
   viewDraft: Em.computed.equal('composeState', DRAFT),
 
+
+  composeStateChanged: function() {
+    var oldOpen = this.get('composerOpened');
+
+    if (this.get('composeState') === OPEN) {
+      this.set('composerOpened', oldOpen || new Date());
+    } else {
+      if (oldOpen) {
+        var oldTotal = this.get('composerTotalOpened') || 0;
+        this.set('composerTotalOpened', oldTotal + (new Date() - oldOpen));
+      }
+      this.set('composerOpened', null);
+    }
+  }.observes('composeState'),
+
+  composerTime: function() {
+    var total = this.get('composerTotalOpened') || 0;
+
+    var oldOpen = this.get('composerOpened');
+    if (oldOpen) {
+      total += (new Date() - oldOpen);
+    }
+
+    return total;
+  }.property().volatile(),
+
   archetype: function() {
-    return this.get('archetypes').findProperty('id', this.get('archetypeId'));
+    return this.get('archetypes').findBy('id', this.get('archetypeId'));
   }.property('archetypeId'),
 
   archetypeChanged: function() {
     return this.set('metaData', Em.Object.create());
   }.observes('archetype'),
 
+  // view detected user is typing
+  typing: _.throttle(function(){
+    var typingTime = this.get("typingTime") || 0;
+    this.set("typingTime", typingTime + 100);
+  }, 100, {leading: false, trailing: true}),
+
   editingFirstPost: Em.computed.and('editingPost', 'post.firstPost'),
   canEditTitle: Em.computed.or('creatingTopic', 'creatingPrivateMessage', 'editingFirstPost'),
   canCategorize: Em.computed.and('canEditTitle', 'notCreatingPrivateMessage'),
+
+  @computed('canEditTitle', 'creatingPrivateMessage', 'categoryId')
+  canEditTopicFeaturedLink(canEditTitle, creatingPrivateMessage, categoryId) {
+    if (!this.siteSettings.topic_featured_link_enabled || !canEditTitle || creatingPrivateMessage) { return false; }
+
+    const categoryIds = this.site.get('topic_featured_link_allowed_category_ids');
+    if (!categoryId && categoryIds &&
+          (categoryIds.indexOf(this.site.get('uncategorized_category_id')) !== -1 || !this.siteSettings.allow_uncategorized_topics)) { return true; }
+    return categoryIds === undefined || !categoryIds.length || categoryIds.indexOf(categoryId) !== -1;
+  },
+
+  @computed('canEditTopicFeaturedLink')
+  titlePlaceholder() {
+    return this.get('canEditTopicFeaturedLink') ? 'composer.title_or_link_placeholder' : 'composer.title_placeholder';
+  },
 
   // Determine the appropriate title for this action
   actionTitle: function() {
     const topic = this.get('topic');
 
-    let postLink, topicLink;
+    let postLink, topicLink, usernameLink;
     if (topic) {
       const postNumber = this.get('post.post_number');
       postLink = "<a href='" + (topic.get('url')) + "/" + postNumber + "'>" +
         I18n.t("post.post_number", { number: postNumber }) + "</a>";
-      topicLink = "<a href='" + (topic.get('url')) + "'> " + (Handlebars.Utils.escapeExpression(topic.get('title'))) + "</a>";
+      topicLink = "<a href='" + (topic.get('url')) + "'> " + escapeExpression(topic.get('title')) + "</a>";
+      usernameLink = "<a href='" + (topic.get('url')) + "/" + postNumber + "'>" + this.get('post.username') + "</a>";
     }
 
     let postDescription;
@@ -82,15 +173,16 @@ const Composer = RestModel.extend({
     if (post) {
       postDescription = I18n.t('post.' +  this.get('action'), {
         link: postLink,
-        replyAvatar: Discourse.Utilities.tinyAvatar(post.get('avatar_template')),
-        username: this.get('post.username')
+        replyAvatar: tinyAvatar(post.get('avatar_template')),
+        username: this.get('post.username'),
+        usernameLink
       });
 
-      if (!Discourse.Mobile.mobileView) {
+      if (!this.site.mobileView) {
         const replyUsername = post.get('reply_to_user.username');
         const replyAvatarTemplate = post.get('reply_to_user.avatar_template');
         if (replyUsername && replyAvatarTemplate && this.get('action') === EDIT) {
-          postDescription += " <i class='fa fa-mail-forward reply-to-glyph'></i> " + Discourse.Utilities.tinyAvatar(replyAvatarTemplate) + " " + replyUsername;
+          postDescription += " <i class='fa fa-mail-forward reply-to-glyph'></i> " + tinyAvatar(replyAvatarTemplate) + " " + replyUsername;
         }
       }
     }
@@ -101,19 +193,14 @@ const Composer = RestModel.extend({
       case REPLY:
       case EDIT:
         if (postDescription) return postDescription;
-        if (topic) return I18n.t('post.reply_topic', { link: topicLink });
+        if (topic) return emojiUnescape(I18n.t('post.reply_topic', { link: topicLink }));
     }
 
   }.property('action', 'post', 'topic', 'topic.title'),
 
-  toggleText: function() {
-    return this.get('showPreview') ? I18n.t('composer.hide_preview') : I18n.t('composer.show_preview');
-  }.property('showPreview'),
-
-  hidePreview: Em.computed.not('showPreview'),
-
   // whether to disable the post button
   cantSubmitPost: function() {
+
     // can't submit while loading
     if (this.get('loading')) return true;
 
@@ -133,7 +220,7 @@ const Composer = RestModel.extend({
       return this.get('canCategorize') &&
             !this.siteSettings.allow_uncategorized_topics &&
             !this.get('categoryId') &&
-            !this.user.get('staff');
+            !this.user.get('admin');
     }
   }.property('loading', 'canEditTitle', 'titleLength', 'targetUsernames', 'replyLength', 'categoryId', 'missingReplyCharacters'),
 
@@ -199,14 +286,12 @@ const Composer = RestModel.extend({
     }
   }.property('privateMessage'),
 
-  /**
-    Number of missing characters in the reply until valid.
-
-    @property missingReplyCharacters
-  **/
-  missingReplyCharacters: function() {
-    return this.get('minimumPostLength') - this.get('replyLength');
-  }.property('minimumPostLength', 'replyLength'),
+  @computed('minimumPostLength', 'replyLength', 'canEditTopicFeaturedLink')
+  missingReplyCharacters(minimumPostLength, replyLength, canEditTopicFeaturedLink) {
+    if (this.get('post.post_type') === this.site.get('post_types.small_action') ||
+        canEditTopicFeaturedLink && this.get('featuredLink')) { return 0; }
+    return minimumPostLength - replyLength;
+  },
 
   /**
     Minimum number of characters for a post body to be valid.
@@ -241,13 +326,11 @@ const Composer = RestModel.extend({
   **/
   replyLength: function() {
     let reply = this.get('reply') || "";
-    while (Discourse.Quote.REGEXP.test(reply)) { reply = reply.replace(Discourse.Quote.REGEXP, ""); }
+    while (Quote.REGEXP.test(reply)) { reply = reply.replace(Quote.REGEXP, ""); }
     return reply.replace(/\s+/img, " ").trim().length;
   }.property('reply'),
 
   _setupComposer: function() {
-    const val = (Discourse.Mobile.mobileView ? false : (Discourse.KeyValueStore.get('composer.showPreview') || 'true'));
-    this.set('showPreview', val === 'true');
     this.set('archetypeId', this.site.get('default_archetype'));
   }.on('init'),
 
@@ -299,9 +382,32 @@ const Composer = RestModel.extend({
     return before.length + text.length;
   },
 
-  togglePreview() {
-    this.toggleProperty('showPreview');
-    Discourse.KeyValueStore.set({ key: 'composer.showPreview', value: this.get('showPreview') });
+  prependText(text, opts) {
+    const reply = (this.get('reply') || '');
+
+    if (opts && opts.new_line && reply.length > 0) {
+      text = text.trim() + "\n\n";
+    }
+    this.set('reply', text + reply);
+  },
+
+  applyTopicTemplate(oldCategoryId, categoryId) {
+    if (this.get('action') !== CREATE_TOPIC) { return; }
+    let reply = this.get('reply');
+
+    // If the user didn't change the template, clear it
+    if (oldCategoryId) {
+      const oldCat = this.site.categories.findBy('id', oldCategoryId);
+      if (oldCat && (oldCat.get('topic_template') === reply)) {
+        reply = "";
+      }
+    }
+
+    if (!Ember.isEmpty(reply)) { return; }
+    const category = this.site.categories.findBy('id', categoryId);
+    if (category) {
+      this.set('reply', category.get('topic_template') || "");
+    }
   },
 
   /*
@@ -321,12 +427,11 @@ const Composer = RestModel.extend({
 
     const composer = this;
     if (!replyBlank &&
-        (opts.action !== this.get('action') || ((opts.reply || opts.action === this.EDIT) && this.get('reply') !== this.get('originalText'))) &&
-        !opts.tested) {
-      opts.tested = true;
+        ((opts.reply || opts.action === EDIT) && this.get('replyDirty'))) {
       return;
     }
 
+    if (opts.action === REPLY && this.get('action') === EDIT) this.set('reply', '');
     if (!opts.draftKey) throw 'draft key is required';
     if (opts.draftSequence === null) throw 'draft sequence is required';
 
@@ -336,22 +441,37 @@ const Composer = RestModel.extend({
       composeState: opts.composerState || OPEN,
       action: opts.action,
       topic: opts.topic,
-      targetUsernames: opts.usernames
+      targetUsernames: opts.usernames,
+      composerTotalOpened: opts.composerTime,
+      typingTime: opts.typingTime
     });
 
     if (opts.post) {
       this.set('post', opts.post);
+
+      this.set('whisper', opts.post.get('post_type') === this.site.get('post_types.whisper'));
       if (!this.get('topic')) {
         this.set('topic', opts.post.get('topic'));
       }
+    } else {
+      this.set('post', null);
     }
 
     this.setProperties({
-      categoryId: opts.categoryId || this.get('topic.category.id'),
       archetypeId: opts.archetypeId || this.site.get('default_archetype'),
       metaData: opts.metaData ? Em.Object.create(opts.metaData) : null,
       reply: opts.reply || this.get("reply") || ""
     });
+
+    // We set the category id separately for topic templates on opening of composer
+    this.set('categoryId', opts.categoryId || this.get('topic.category.id'));
+
+    if (!this.get('categoryId') && this.get('creatingTopic')) {
+      const categories = Discourse.Category.list();
+      if (categories.length === 1) {
+        this.set('categoryId', categories[0].get('id'));
+      }
+    }
 
     if (opts.postId) {
       this.set('loading', true);
@@ -390,6 +510,12 @@ const Composer = RestModel.extend({
 
   save(opts) {
     if (!this.get('cantSubmitPost')) {
+
+      // change category may result in some effect for topic featured link
+      if (!this.get('canEditTopicFeaturedLink')) {
+        this.set('featuredLink', null);
+      }
+
       return this.get('editingPost') ? this.editPost(opts) : this.createPost(opts);
     }
   },
@@ -405,8 +531,13 @@ const Composer = RestModel.extend({
       reply: null,
       post: null,
       title: null,
+      unlistTopic: false,
       editReason: null,
-      stagedPost: false
+      stagedPost: false,
+      typingTime: 0,
+      composerOpened: null,
+      composerTotalOpened: 0,
+      featuredLink: null
     });
   },
 
@@ -424,8 +555,7 @@ const Composer = RestModel.extend({
         post.get('post_number') === 1 &&
         this.get('topic.details.can_edit')) {
       const topicProps = this.getProperties(Object.keys(_edit_topic_serializer));
-
-       promise = Topic.update(this.get('topic'), topicProps);
+      promise = Topic.update(this.get('topic'), topicProps);
     } else {
       promise = Ember.RSVP.resolve();
     }
@@ -437,17 +567,23 @@ const Composer = RestModel.extend({
       cooked: this.getCookedHtml()
     };
 
-    this.set('composeState', CLOSED);
+    this.set('composeState', SAVING);
+
+    var rollback = throwAjaxError(function(){
+      post.set('cooked', oldCooked);
+      self.set('composeState', OPEN);
+    });
 
     return promise.then(function() {
+      // rest model only sets props after it is saved
+      post.set("cooked", props.cooked);
       return post.save(props).then(function(result) {
         self.clearState();
         return result;
-      }).catch(throwAjaxError(function() {
-        post.set('cooked', oldCooked);
-        self.set('composeState', OPEN);
-      }));
-    });
+      }).catch(function(error) {
+        throw error;
+      });
+    }).catch(rollback);
   },
 
   serialize(serializer, dest) {
@@ -470,6 +606,9 @@ const Composer = RestModel.extend({
 
     let addedToStream = false;
 
+    const postTypes = this.site.get('post_types');
+    const postType = this.get('whisper') ? postTypes.whisper : postTypes.regular;
+
     // Build the post object
     const createdPost = this.store.createRecord('post', {
       imageSizes: opts.imageSizes,
@@ -480,15 +619,17 @@ const Composer = RestModel.extend({
       username: user.get('username'),
       user_id: user.get('id'),
       user_title: user.get('title'),
-      uploaded_avatar_id: user.get('uploaded_avatar_id'),
+      avatar_template: user.get('avatar_template'),
       user_custom_fields: user.get('custom_fields'),
-      post_type: this.site.get('post_types.regular'),
+      post_type: postType,
       actions_summary: [],
       moderator: user.get('moderator'),
       admin: user.get('admin'),
       yours: true,
       read: true,
-      wiki: false
+      wiki: false,
+      typingTime: this.get('typingTime'),
+      composerTime: this.get('composerTime')
     });
 
     this.serialize(_create_serializer, createdPost);
@@ -498,7 +639,7 @@ const Composer = RestModel.extend({
         reply_to_post_number: post.get('post_number'),
         reply_to_user: {
           username: post.get('username'),
-          uploaded_avatar_id: post.get('uploaded_avatar_id')
+          avatar_template: post.get('avatar_template')
         }
       });
     }
@@ -535,6 +676,11 @@ const Composer = RestModel.extend({
         return result;
       }
 
+      // We sometimes want to hide the `reply_to_user` if the post contains a quote
+      if (result.responseJson && result.responseJson.post && !result.responseJson.post.reply_to_user) {
+        createdPost.set('reply_to_user', null);
+      }
+
       if (topic) {
         // It's no longer a new post
         topic.set('draft_sequence', result.target.draft_sequence);
@@ -564,13 +710,17 @@ const Composer = RestModel.extend({
     }).catch(throwAjaxError(function() {
       if (postStream) {
         postStream.undoPost(createdPost);
+
+        if (post) {
+          post.set('reply_count', post.get('reply_count') - 1);
+        }
       }
       Ember.run.next(() => composer.set('composeState', OPEN));
     }));
   },
 
   getCookedHtml() {
-    return $('#wmd-preview').html().replace(/<span class="marker"><\/span>/g, '');
+    return $('#reply-control .d-editor-preview').html().replace(/<span class="marker"><\/span>/g, '');
   },
 
   saveDraft() {
@@ -589,65 +739,47 @@ const Composer = RestModel.extend({
       postId: this.get('post.id'),
       archetypeId: this.get('archetypeId'),
       metaData: this.get('metaData'),
-      usernames: this.get('targetUsernames')
+      usernames: this.get('targetUsernames'),
+      composerTime: this.get('composerTime'),
+      typingTime: this.get('typingTime')
     };
 
     this.set('draftStatus', I18n.t('composer.saving_draft_tip'));
 
     const composer = this;
 
+    if (this._clearingStatus) {
+      Em.run.cancel(this._clearingStatus);
+      this._clearingStatus = null;
+    }
+
     // try to save the draft
-    return Discourse.Draft.save(this.get('draftKey'), this.get('draftSequence'), data)
+    return Draft.save(this.get('draftKey'), this.get('draftSequence'), data)
       .then(function() {
         composer.set('draftStatus', I18n.t('composer.saved_draft_tip'));
       }).catch(function() {
         composer.set('draftStatus', I18n.t('composer.drafts_offline'));
       });
-  }
+  },
+
+  dataChanged: function(){
+    const draftStatus = this.get('draftStatus');
+    const self = this;
+
+    if (draftStatus && !this._clearingStatus) {
+
+      this._clearingStatus = Em.run.later(this, function(){
+        self.set('draftStatus', null);
+        self._clearingStatus = null;
+      }, 1000);
+    }
+  }.observes('title','reply')
 
 });
 
 Composer.reopenClass({
 
-  open(opts) {
-    const composer = Composer.create();
-    composer.open(opts);
-    return composer;
-  },
-
-  loadDraft(opts) {
-    opts = opts || {};
-
-    let draft = opts.draft;
-    const draftKey = opts.draftKey;
-    const draftSequence = opts.draftSequence;
-
-    try {
-      if (draft && typeof draft === 'string') {
-        draft = JSON.parse(draft);
-      }
-    } catch (error) {
-      draft = null;
-      Discourse.Draft.clear(draftKey, draftSequence);
-    }
-    if (draft && ((draft.title && draft.title !== '') || (draft.reply && draft.reply !== ''))) {
-      return this.open({
-        draftKey,
-        draftSequence,
-        action: draft.action,
-        title: draft.title,
-        categoryId: draft.categoryId || opts.categoryId,
-        postId: draft.postId,
-        archetypeId: draft.archetypeId,
-        reply: draft.reply,
-        metaData: draft.metaData,
-        usernames: draft.usernames,
-        draft: true,
-        composerState: DRAFT
-      });
-    }
-  },
-
+  // TODO: Replace with injection
   create(args) {
     args = args || {};
     args.user = args.user || Discourse.User.current();
@@ -683,7 +815,8 @@ Composer.reopenClass({
   EDIT,
 
   // Draft key
-  REPLY_AS_NEW_TOPIC_KEY
+  REPLY_AS_NEW_TOPIC_KEY,
+  REPLY_AS_NEW_PRIVATE_MESSAGE_KEY
 });
 
 export default Composer;

@@ -1,7 +1,10 @@
-module("Discourse.Report");
+import { blank } from 'helpers/qunit-helpers';
+import Report from 'admin/models/report';
+
+module("Report");
 
 function reportWithData(data) {
-  return Discourse.Report.create({
+  return Report.create({
     type: 'topics',
     data: _.map(data, function(val, index) {
       return { x: moment().subtract(index, "days").format('YYYY-MM-DD'), y: val };
@@ -14,8 +17,11 @@ test("counts", function() {
 
   equal(report.get('todayCount'), 5);
   equal(report.get('yesterdayCount'), 4);
-  equal(report.sumDays(2, 4), 6, "adds the values for the given range of days, inclusive");
+  equal(report.valueFor(2, 4), 6, "adds the values for the given range of days, inclusive");
   equal(report.get('lastSevenDaysCount'), 307, "sums 7 days excluding today");
+
+  report.set("method", "average");
+  equal(report.valueFor(2, 4), 2, "averages the values for the given range of days");
 });
 
 test("percentChangeString", function() {

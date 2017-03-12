@@ -10,7 +10,11 @@ Discourse::Application.configure do
   config.action_controller.perform_caching = true
 
   # Disable Rails's static asset server (Apache or nginx will already do this)
+<<<<<<< HEAD
   config.serve_static_assets = true
+=======
+  config.serve_static_files = GlobalSetting.serve_static_assets
+>>>>>>> upstream/master
 
   config.assets.js_compressor = :uglifier
 
@@ -26,10 +30,6 @@ Discourse::Application.configure do
   config.assets.digest = true
 
   config.log_level = :info
-
-  # Enable locale fallbacks for I18n (makes lookups for any locale fall back to
-  # the I18n.default_locale when a translation can not be found)
-  config.i18n.fallbacks = true
 
   if GlobalSetting.smtp_address
     settings = {
@@ -60,7 +60,7 @@ Discourse::Application.configure do
   # Send deprecation notices to registered listeners
   config.active_support.deprecation = :notify
 
-  # this will cause all handlebars templates to be pre-compiles, making your page faster
+  # this will cause all handlebars templates to be pre-compiled, making your page faster
   config.handlebars.precompile = true
 
   # allows developers to use mini profiler
@@ -74,7 +74,7 @@ Discourse::Application.configure do
   # developers have god like rights and may impersonate anyone in the system
   # normal admins may only impersonate other moderators (not admins)
   if emails = GlobalSetting.developer_emails
-    config.developer_emails = emails.split(",").map(&:strip)
+    config.developer_emails = emails.split(",").map(&:downcase).map(&:strip)
   end
 
 end

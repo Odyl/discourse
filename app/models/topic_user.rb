@@ -1,3 +1,5 @@
+require_dependency 'notification_levels'
+
 class TopicUser < ActiveRecord::Base
   belongs_to :user
   belongs_to :topic
@@ -7,8 +9,9 @@ class TopicUser < ActiveRecord::Base
 
   scope :tracking, lambda { |topic_id|
     where(topic_id: topic_id)
-        .where("COALESCE(topic_users.notification_level, :regular) >= :tracking",
-                regular: TopicUser.notification_levels[:regular], tracking: TopicUser.notification_levels[:tracking])
+   .where("COALESCE(topic_users.notification_level, :regular) >= :tracking",
+     regular: TopicUser.notification_levels[:regular],
+     tracking: TopicUser.notification_levels[:tracking])
   }
 
   # Class methods
@@ -16,35 +19,69 @@ class TopicUser < ActiveRecord::Base
 
     # Enums
     def notification_levels
-      @notification_levels ||= Enum.new(:muted, :regular, :tracking, :watching, start: 0)
+      NotificationLevels.topic_levels
     end
 
     def notification_reasons
-      @notification_reasons ||= Enum.new(
-        :created_topic,
-        :user_changed,
-        :user_interacted,
-        :created_post,
-        :auto_watch,
-        :auto_watch_category,
-        :auto_mute_category,
-        :auto_track_category,
-        :plugin_changed
-      )
+      @notification_reasons ||= Enum.new(created_topic: 1,
+                                         user_changed: 2,
+                                         user_interacted: 3,
+                                         created_post: 4,
+                                         auto_watch: 5,
+                                         auto_watch_category: 6,
+                                         auto_mute_category: 7,
+                                         auto_track_category: 8,
+                                         plugin_changed: 9,
+                                         auto_watch_tag: 10,
+                                         auto_mute_tag: 11,
+                                         auto_track_tag: 12)
     end
 
-    def auto_track(user_id, topic_id, reason)
+    def auto_notification(user_id, topic_id, reason, notification_level)
       if TopicUser.where(user_id: user_id, topic_id: topic_id, notifications_reason_id: nil).exists?
         change(user_id, topic_id,
-          notification_level: notification_levels[:tracking],
+          notification_level: notification_level,
           notifications_reason_id: reason
         )
 
         MessageBus.publish("/topic/#{topic_id}", {
-          notification_level_change: notification_levels[:tracking],
+          notification_level_change: notification_level,
           notifications_reason_id: reason
         }, user_ids: [user_id])
       end
+    end
+
+    def auto_notification_for_staging(user_id, topic_id, reason)
+      topic_user = TopicUser.find_or_initialize_by(user_id: user_id, topic_id: topic_id)
+      topic_user.notification_level = notification_levels[:watching]
+      topic_user.notifications_reason_id = reason
+      topic_user.save
+    end
+
+    def unwatch_categories!(user, category_ids)
+
+      track_threshold = user.user_option.auto_track_topics_after_msecs
+
+      sql = <<SQL
+      UPDATE topic_users tu
+      SET notification_level = CASE
+        WHEN t.user_id = :user_id THEN :watching
+        WHEN total_msecs_viewed > :track_threshold AND :track_threshold >= 0 THEN :tracking
+        ELSE :regular
+      end
+      FROM topics t
+      WHERE t.id = tu.topic_id AND tu.notification_level <> :muted AND category_id IN (:category_ids) AND tu.user_id = :user_id
+SQL
+
+     exec_sql(sql,
+                  watching: notification_levels[:watching],
+                  tracking: notification_levels[:tracking],
+                  regular: notification_levels[:regular],
+                  muted: notification_levels[:muted],
+                  category_ids: category_ids,
+                  user_id: user.id,
+                  track_threshold: track_threshold
+     )
     end
 
     # Find the information specific to a user in a forum topic
@@ -58,13 +95,9 @@ class TopicUser < ActiveRecord::Base
 
     def create_lookup(topic_users)
       topic_users = topic_users.to_a
-
       result = {}
       return result if topic_users.blank?
-
-      topic_users.each do |ftu|
-        result[ftu.topic_id] = ftu
-      end
+      topic_users.each { |ftu| result[ftu.topic_id] = ftu }
       result
     end
 
@@ -98,46 +131,121 @@ class TopicUser < ActiveRecord::Base
         rows = TopicUser.where(topic_id: topic_id, user_id: user_id).update_all([attrs_sql, *vals])
 
         if rows == 0
-          now = DateTime.now
-          auto_track_after = User.select(:auto_track_topics_after_msecs).find_by(id: user_id).auto_track_topics_after_msecs
-          auto_track_after ||= SiteSetting.auto_track_topics_after
-
-          if auto_track_after >= 0 && auto_track_after <= (attrs[:total_msecs_viewed] || 0)
-            attrs[:notification_level] ||= notification_levels[:tracking]
-          end
-
-          TopicUser.create(attrs.merge!(user_id: user_id, topic_id: topic_id, first_visited_at: now ,last_visited_at: now))
-        else
-          observe_after_save_callbacks_for topic_id, user_id
+          create_missing_record(user_id, topic_id, attrs)
         end
       end
 
       if attrs[:notification_level]
-        MessageBus.publish("/topic/#{topic_id}",
-                         {notification_level_change: attrs[:notification_level]}, user_ids: [user_id])
+        MessageBus.publish("/topic/#{topic_id}", { notification_level_change: attrs[:notification_level] }, user_ids: [user_id])
       end
-
 
     rescue ActiveRecord::RecordNotUnique
       # In case of a race condition to insert, do nothing
     end
 
-    def track_visit!(topic,user)
-      topic_id = topic.is_a?(Topic) ? topic.id : topic
-      user_id = user.is_a?(User) ? user.id : topic
-
+    def create_missing_record(user_id, topic_id, attrs)
       now = DateTime.now
-      rows = TopicUser.where({topic_id: topic_id, user_id: user_id}).update_all({last_visited_at: now})
+
+      unless attrs[:notification_level]
+        category_notification_level = CategoryUser.where(user_id: user_id)
+                    .where("category_id IN (SELECT category_id FROM topics WHERE id = :id)", id: topic_id)
+                    .where("notification_level IN (:levels)", levels: [CategoryUser.notification_levels[:watching],
+                        CategoryUser.notification_levels[:tracking]])
+                    .order("notification_level DESC")
+                    .limit(1)
+                    .pluck(:notification_level)
+                    .first
+
+        tag_notification_level = TagUser.where(user_id: user_id)
+                    .where("tag_id IN (SELECT tag_id FROM topic_tags WHERE topic_id = :id)", id: topic_id)
+                    .where("notification_level IN (:levels)", levels: [CategoryUser.notification_levels[:watching],
+                        CategoryUser.notification_levels[:tracking]])
+                    .order("notification_level DESC")
+                    .limit(1)
+                    .pluck(:notification_level)
+                    .first
+
+        if category_notification_level && !(tag_notification_level && (tag_notification_level > category_notification_level))
+          attrs[:notification_level] = category_notification_level
+          attrs[:notifications_changed_at] = DateTime.now
+          attrs[:notifications_reason_id] = category_notification_level == CategoryUser.notification_levels[:watching] ?
+              TopicUser.notification_reasons[:auto_watch_category] :
+              TopicUser.notification_reasons[:auto_track_category]
+
+        elsif tag_notification_level
+          attrs[:notification_level] = tag_notification_level
+          attrs[:notifications_changed_at] = DateTime.now
+          attrs[:notifications_reason_id] = tag_notification_level == TagUser.notification_levels[:watching] ?
+              TopicUser.notification_reasons[:auto_watch_tag] :
+              TopicUser.notification_reasons[:auto_track_tag]
+        end
+
+
+      end
+
+      unless attrs[:notification_level]
+        auto_track_after = UserOption.where(user_id: user_id).pluck(:auto_track_topics_after_msecs).first
+        auto_track_after ||= SiteSetting.default_other_auto_track_topics_after_msecs
+
+        if auto_track_after >= 0 && auto_track_after <= (attrs[:total_msecs_viewed].to_i || 0)
+          attrs[:notification_level] ||= notification_levels[:tracking]
+        end
+      end
+
+      TopicUser.create(attrs.merge!(user_id: user_id, topic_id: topic_id, first_visited_at: now ,last_visited_at: now))
+    end
+
+    def track_visit!(topic_id, user_id)
+      now = DateTime.now
+      rows = TopicUser.where(topic_id: topic_id, user_id: user_id).update_all(last_visited_at: now)
+
       if rows == 0
-        TopicUser.create(topic_id: topic_id, user_id: user_id, last_visited_at: now, first_visited_at: now)
-      else
-        observe_after_save_callbacks_for topic_id, user_id
+        change(user_id, topic_id, last_visited_at: now, first_visited_at: now)
       end
     end
 
     # Update the last read and the last seen post count, but only if it doesn't exist.
     # This would be a lot easier if psql supported some kind of upsert
-    def update_last_read(user, topic_id, post_number, msecs)
+    UPDATE_TOPIC_USER_SQL = "UPDATE topic_users
+                                    SET
+                                      last_read_post_number = GREATEST(:post_number, tu.last_read_post_number),
+                                      highest_seen_post_number = t.highest_post_number,
+                                      total_msecs_viewed = LEAST(tu.total_msecs_viewed + :msecs,86400000),
+                                      notification_level =
+                                         case when tu.notifications_reason_id is null and (tu.total_msecs_viewed + :msecs) >
+                                            coalesce(uo.auto_track_topics_after_msecs,:threshold) and
+                                            coalesce(uo.auto_track_topics_after_msecs, :threshold) >= 0 then
+                                              :tracking
+                                         else
+                                            tu.notification_level
+                                         end
+                                  FROM topic_users tu
+                                  join topics t on t.id = tu.topic_id
+                                  join users u on u.id = :user_id
+                                  join user_options uo on uo.user_id = :user_id
+                                  WHERE
+                                       tu.topic_id = topic_users.topic_id AND
+                                       tu.user_id = topic_users.user_id AND
+                                       tu.topic_id = :topic_id AND
+                                       tu.user_id = :user_id
+                                  RETURNING
+                                    topic_users.notification_level, tu.notification_level old_level, tu.last_read_post_number
+                                "
+
+    UPDATE_TOPIC_USER_SQL_STAFF = UPDATE_TOPIC_USER_SQL.gsub("highest_post_number", "highest_staff_post_number")
+
+    INSERT_TOPIC_USER_SQL = "INSERT INTO topic_users (user_id, topic_id, last_read_post_number, highest_seen_post_number, last_visited_at, first_visited_at, notification_level)
+                  SELECT :user_id, :topic_id, :post_number, ft.highest_post_number, :now, :now, :new_status
+                  FROM topics AS ft
+                  JOIN users u on u.id = :user_id
+                  WHERE ft.id = :topic_id
+                    AND NOT EXISTS(SELECT 1
+                                   FROM topic_users AS ftu
+                                   WHERE ftu.user_id = :user_id and ftu.topic_id = :topic_id)"
+
+    INSERT_TOPIC_USER_SQL_STAFF = INSERT_TOPIC_USER_SQL.gsub("highest_post_number", "highest_staff_post_number")
+
+    def update_last_read(user, topic_id, post_number, msecs, opts={})
       return if post_number.blank?
       msecs = 0 if msecs.to_i < 0
 
@@ -148,7 +256,7 @@ class TopicUser < ActiveRecord::Base
         now: DateTime.now,
         msecs: msecs,
         tracking: notification_levels[:tracking],
-        threshold: SiteSetting.auto_track_topics_after
+        threshold: SiteSetting.default_other_auto_track_topics_after_msecs
       }
 
       # In case anyone seens "highest_seen_post_number" and gets confused, like I do.
@@ -157,31 +265,11 @@ class TopicUser < ActiveRecord::Base
       # ... user visited the topic but did not read the posts
       #
       # 86400000 = 1 day
-      rows = exec_sql("UPDATE topic_users
-                                    SET
-                                      last_read_post_number = GREATEST(:post_number, tu.last_read_post_number),
-                                      highest_seen_post_number = t.highest_post_number,
-                                      total_msecs_viewed = LEAST(tu.total_msecs_viewed + :msecs,86400000),
-                                      notification_level =
-                                         case when tu.notifications_reason_id is null and (tu.total_msecs_viewed + :msecs) >
-                                            coalesce(u.auto_track_topics_after_msecs,:threshold) and
-                                            coalesce(u.auto_track_topics_after_msecs, :threshold) >= 0 then
-                                              :tracking
-                                         else
-                                            tu.notification_level
-                                         end
-                                  FROM topic_users tu
-                                  join topics t on t.id = tu.topic_id
-                                  join users u on u.id = :user_id
-                                  WHERE
-                                       tu.topic_id = topic_users.topic_id AND
-                                       tu.user_id = topic_users.user_id AND
-                                       tu.topic_id = :topic_id AND
-                                       tu.user_id = :user_id
-                                  RETURNING
-                                    topic_users.notification_level, tu.notification_level old_level, tu.last_read_post_number
-                                ",
-                                args).values
+      rows = if user.staff?
+               exec_sql(UPDATE_TOPIC_USER_SQL_STAFF,args).values
+             else
+               exec_sql(UPDATE_TOPIC_USER_SQL,args).values
+             end
 
       if rows.length == 1
         before = rows[0][1].to_i
@@ -192,46 +280,50 @@ class TopicUser < ActiveRecord::Base
         if before_last_read < post_number
           # The user read at least one new post
           TopicTrackingState.publish_read(topic_id, post_number, user.id, after)
-          user.update_posts_read!(post_number - before_last_read)
+          user.update_posts_read!(post_number - before_last_read, mobile: opts[:mobile])
         end
 
         if before != after
-          MessageBus.publish("/topic/#{topic_id}", {notification_level_change: after}, user_ids: [user.id])
+          MessageBus.publish("/topic/#{topic_id}", { notification_level_change: after }, user_ids: [user.id])
         end
       end
 
       if rows.length == 0
         # The user read at least one post in a topic that they haven't viewed before.
         args[:new_status] = notification_levels[:regular]
-        if (user.auto_track_topics_after_msecs || SiteSetting.auto_track_topics_after) == 0
+        if (user.user_option.auto_track_topics_after_msecs || SiteSetting.default_other_auto_track_topics_after_msecs) == 0
           args[:new_status] = notification_levels[:tracking]
         end
         TopicTrackingState.publish_read(topic_id, post_number, user.id, args[:new_status])
-        user.update_posts_read!(post_number)
 
-        exec_sql("INSERT INTO topic_users (user_id, topic_id, last_read_post_number, highest_seen_post_number, last_visited_at, first_visited_at, notification_level)
-                  SELECT :user_id, :topic_id, :post_number, ft.highest_post_number, :now, :now, :new_status
-                  FROM topics AS ft
-                  JOIN users u on u.id = :user_id
-                  WHERE ft.id = :topic_id
-                    AND NOT EXISTS(SELECT 1
-                                   FROM topic_users AS ftu
-                                   WHERE ftu.user_id = :user_id and ftu.topic_id = :topic_id)",
-                  args)
+        user.update_posts_read!(post_number, mobile: opts[:mobile])
 
-        MessageBus.publish("/topic/#{topic_id}", {notification_level_change: args[:new_status]}, user_ids: [user.id])
+        begin
+          if user.staff?
+            exec_sql(INSERT_TOPIC_USER_SQL_STAFF, args)
+          else
+            exec_sql(INSERT_TOPIC_USER_SQL, args)
+          end
+        rescue PG::UniqueViolation
+          # if record is inserted between two statements this can happen
+          # we retry once to avoid failing the req
+          if opts[:retry]
+            raise
+          else
+            opts[:retry] = true
+            update_last_read(user, topic_id, post_number, msecs, opts)
+          end
+        end
+
+        MessageBus.publish("/topic/#{topic_id}", { notification_level_change: args[:new_status] }, user_ids: [user.id])
       end
     end
 
-    def observe_after_save_callbacks_for(topic_id, user_id)
-      TopicUser.where(topic_id: topic_id, user_id: user_id).each do |topic_user|
-        UserActionObserver.instance.after_save topic_user
-      end
-    end
   end
 
   def self.update_post_action_cache(opts={})
     user_id = opts[:user_id]
+    post_id = opts[:post_id]
     topic_id = opts[:topic_id]
     action_type = opts[:post_action_type]
 
@@ -277,7 +369,36 @@ SQL
       builder.where("tu2.topic_id = :topic_id", topic_id: topic_id)
     end
 
+    if post_id
+      builder.where("tu2.topic_id IN (SELECT topic_id FROM posts WHERE id = :post_id)", post_id: post_id)
+      builder.where("tu2.user_id IN (SELECT user_id FROM post_actions
+                                     WHERE post_id = :post_id AND
+                                           post_action_type_id = :action_type_id)")
+    end
+
     builder.exec(action_type_id: PostActionType.types[action_type])
+  end
+
+  # cap number of unread topics at count, bumping up highest_seen / last_read if needed
+  def self.cap_unread!(user_id, count)
+    sql = <<SQL
+    UPDATE topic_users tu
+    SET last_read_post_number = max_number,
+        highest_seen_post_number = max_number
+    FROM (
+      SELECT MAX(post_number) max_number, p.topic_id FROM posts p
+      WHERE deleted_at IS NULL
+      GROUP BY p.topic_id
+    ) m
+    WHERE tu.user_id = :user_id AND
+          m.topic_id = tu.topic_id AND
+          tu.topic_id IN (
+            #{TopicTrackingState.report_raw_sql(skip_new: true, select: "topics.id")}
+            offset :count
+          )
+SQL
+
+    TopicUser.exec_sql(sql, user_id: user_id, count: count)
   end
 
   def self.ensure_consistency!(topic_id=nil)

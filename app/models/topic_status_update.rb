@@ -1,21 +1,20 @@
 TopicStatusUpdate = Struct.new(:topic, :user) do
-  def update!(status, enabled, message=nil)
+  def update!(status, enabled, opts={})
     status = Status.new(status, enabled)
 
     Topic.transaction do
-      change(status)
+      change(status, opts)
       highest_post_number = topic.highest_post_number
-
-      create_moderator_post_for(status, message)
+      create_moderator_post_for(status, opts[:message])
       update_read_state_for(status, highest_post_number)
     end
   end
 
   private
 
-  def change(status)
+  def change(status, opts={})
     if status.pinned? || status.pinned_globally?
-      topic.update_pinned(status.enabled?, status.pinned_globally?)
+      topic.update_pinned(status.enabled?, status.pinned_globally?, opts[:until])
     elsif status.autoclosed?
       topic.update_column('closed', status.enabled?)
     else
@@ -26,9 +25,13 @@ TopicStatusUpdate = Struct.new(:topic, :user) do
       topic.reload.set_auto_close(nil).save
     end
 
-    # pick up the changes right away as opposed to waiting for
-    # the schedule
-    CategoryFeaturedTopic.feature_topics_for(topic.category)
+    # remove featured topics if we close/archive/make them invisible. Previously we used
+    # to run the whole featuring logic but that could be very slow and have concurrency
+    # errors on large sites with many autocloses and topics being created.
+    if ((status.enabled? && (status.autoclosed? || status.closed? || status.archived?)) ||
+        (status.disabled? && status.visible?))
+      CategoryFeaturedTopic.where(topic_id: topic.id).delete_all
+    end
   end
 
   def create_moderator_post_for(status, message=nil)
@@ -49,13 +52,20 @@ TopicStatusUpdate = Struct.new(:topic, :user) do
       locale_key = status.locale_key
       locale_key << "_lastpost" if topic.auto_close_based_on_last_post
       message_for_autoclosed(locale_key)
-    else
-      I18n.t(status.locale_key)
     end
   end
 
   def message_for_autoclosed(locale_key)
-    num_minutes = topic.auto_close_started_at ? ((Time.zone.now - topic.auto_close_started_at) / 1.minute).round : topic.age_in_minutes
+    num_minutes = ((
+                    if topic.auto_close_based_on_last_post
+                      topic.auto_close_hours.hours
+                    elsif topic.auto_close_started_at
+                      Time.zone.now - topic.auto_close_started_at
+                    else
+                      Time.zone.now - topic.created_at
+                    end
+                  ) / 1.minute).round
+
     if num_minutes.minutes >= 2.days
       I18n.t("#{locale_key}_days", count: (num_minutes.minutes / 1.day).round)
     else
@@ -69,11 +79,13 @@ TopicStatusUpdate = Struct.new(:topic, :user) do
   end
 
   def options_for(status)
-    { bump: status.reopening_topic? }
+    { bump: status.reopening_topic?,
+      post_type: Post.types[:small_action],
+      action_code: status.action_code }
   end
 
   Status = Struct.new(:name, :enabled) do
-    %w(pinned_globally pinned autoclosed closed).each do |status|
+    %w(pinned_globally pinned autoclosed closed visible archived).each do |status|
       define_method("#{status}?") { name == status }
     end
 
@@ -85,8 +97,12 @@ TopicStatusUpdate = Struct.new(:topic, :user) do
       !enabled?
     end
 
+    def action_code
+      "#{name}.#{enabled? ? 'enabled' : 'disabled'}"
+    end
+
     def locale_key
-      "topic_statuses.#{name}_#{enabled? ? 'enabled' : 'disabled'}"
+      "topic_statuses.#{action_code.tr('.', '_')}"
     end
 
     def reopening_topic?

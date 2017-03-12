@@ -1,21 +1,21 @@
 <div class='autocomplete'>
   <ul>
-    {{#each user in options.users}}
+    {{#each options.users as |user|}}
       <li>
-        <a href='#'>{{avatar user imageSize="tiny"}}
+        <a href title="{{user.name}}">
+          {{avatar user imageSize="tiny"}}
           <span class='username'>{{user.username}}</span>
           <span class='name'>{{user.name}}</span>
         </a>
       </li>
     {{/each}}
     {{#if options.groups}}
-      {{#if options.users}}<hr>{{/if}}
-      {{#each group in options.groups}}
+      {{#each options.groups as |group|}}
         <li>
-          <a href=''>
-            <i class='icon-group'></i>
+          <a href title="{{group.full_name}}">
+            <i class='fa fa-users'></i>
             <span class='username'>{{group.name}}</span>
-            <span class='name'>{{max-usernames group.usernames max="3"}}</span>
+            <span class='name'>{{group.full_name}}</span>
           </a>
         </li>
       {{/each}}

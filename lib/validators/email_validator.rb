@@ -17,7 +17,7 @@ class EmailValidator < ActiveModel::EachValidator
 
   def email_in_restriction_setting?(setting, value)
     domains = setting.gsub('.', '\.')
-    regexp = Regexp.new("@(.+\.)?(#{domains})", true)
+    regexp = Regexp.new("@(.+\\.)?(#{domains})", true)
     value =~ regexp
   end
 
@@ -26,7 +26,7 @@ class EmailValidator < ActiveModel::EachValidator
   end
 
   def self.email_regex
-    /^[a-zA-Z0-9!#\$%&'*+\/=?\^_`{|}~\-]+(?:\.[a-zA-Z0-9!#\$%&'\*+\/=?\^_`{|}~\-]+)*@(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?\.)+[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?$/
+    /\A[a-zA-Z0-9!#\$%&'*+\/=?\^_`{|}~\-]+(?:\.[a-zA-Z0-9!#\$%&'\*+\/=?\^_`{|}~\-]+)*@(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?\.)+[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?$\z/
   end
 
 end

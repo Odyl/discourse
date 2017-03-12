@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require_dependency 'plugin/metadata'
 
 describe Plugin::Metadata do
@@ -22,6 +22,33 @@ TEXT
       expect(metadata.url).to eq("http://discourse.org")
       expect(metadata.required_version).to eq("1.3.0beta6+48")
     end
+  end
+
+  def official(name)
+    metadata = Plugin::Metadata.parse <<TEXT
+# name: #{name}
+TEXT
+
+    expect(metadata.official?).to eq(true)
+  end
+
+  def unofficial(name)
+    metadata = Plugin::Metadata.parse <<TEXT
+# name: #{name}
+TEXT
+
+    expect(metadata.official?).to eq(false)
+  end
+
+  it "correctly detects official vs unofficial plugins" do
+    official("customer-flair")
+    official("discourse-adplugin")
+    official("discourse-akismet")
+    official("discourse-backup-uploads-to-s3")
+    official("discourse-cakeday")
+    official("Canned Replies")
+    official("discourse-data-explorer")
+    unofficial("babble")
   end
 
 end

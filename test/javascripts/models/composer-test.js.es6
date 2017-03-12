@@ -1,13 +1,20 @@
+import { blank } from 'helpers/qunit-helpers';
 import { currentUser } from 'helpers/qunit-helpers';
+import Composer from 'discourse/models/composer';
+import createStore from 'helpers/create-store';
 
 module("model:composer");
 
 function createComposer(opts) {
   opts = opts || {};
   opts.user = opts.user || currentUser();
-  opts.site = Discourse.Site.current();
-  opts.siteSettings = Discourse.SiteSettings;
-  return Discourse.Composer.create(opts);
+  return createStore().createRecord('composer', opts);
+}
+
+function openComposer(opts) {
+  const composer = createComposer(opts);
+  composer.open(opts);
+  return composer;
 }
 
 test('replyLength', function() {
@@ -33,6 +40,11 @@ test('missingReplyCharacters', function() {
   missingReplyCharacters('hi', false, false, Discourse.SiteSettings.min_post_length - 2, 'too short public post');
   missingReplyCharacters('hi', false, true,  Discourse.SiteSettings.min_first_post_length - 2, 'too short first post');
   missingReplyCharacters('hi', true, false,  Discourse.SiteSettings.min_private_message_post_length - 2, 'too short private message');
+
+  const link = "http://imgur.com/gallery/grxX8";
+  const composer = createComposer({ canEditTopicFeaturedLink: true, title: link, featuredLink: link, reply: link });
+
+  equal(composer.get('missingReplyCharacters'), 0, "don't require any post content");
 });
 
 test('missingTitleCharacters', function() {
@@ -88,6 +100,21 @@ test("appendText", function() {
   equal(composer.get("reply"), "c\n\nab");
 });
 
+test("prependText", function() {
+  const composer = createComposer();
+
+  blank(composer.get('reply'), "the reply is blank by default");
+
+  composer.prependText("hello");
+  equal(composer.get('reply'), "hello", "it prepends text to nothing");
+
+  composer.prependText("world ");
+  equal(composer.get('reply'), "world hello", "it prepends text to existing text");
+
+  composer.prependText("before new line", {new_line: true});
+  equal(composer.get('reply'), "before new line\n\nworld hello", "it prepends text with new line to existing text");
+});
+
 test("Title length for regular topics", function() {
   Discourse.SiteSettings.min_topic_title_length = 5;
   Discourse.SiteSettings.max_topic_title_length = 10;
@@ -106,7 +133,7 @@ test("Title length for regular topics", function() {
 test("Title length for private messages", function() {
   Discourse.SiteSettings.min_private_message_title_length = 5;
   Discourse.SiteSettings.max_topic_title_length = 10;
-  const composer = createComposer({action: Discourse.Composer.PRIVATE_MESSAGE});
+  const composer = createComposer({action: Composer.PRIVATE_MESSAGE});
 
   composer.set('title', 'asdf');
   ok(!composer.get('titleLengthValid'), "short titles are not valid");
@@ -121,7 +148,7 @@ test("Title length for private messages", function() {
 test("Title length for private messages", function() {
   Discourse.SiteSettings.min_private_message_title_length = 5;
   Discourse.SiteSettings.max_topic_title_length = 10;
-  const composer = createComposer({action: Discourse.Composer.PRIVATE_MESSAGE});
+  const composer = createComposer({action: Composer.PRIVATE_MESSAGE});
 
   composer.set('title', 'asdf');
   ok(!composer.get('titleLengthValid'), "short titles are not valid");
@@ -138,7 +165,7 @@ test('editingFirstPost', function() {
   ok(!composer.get('editingFirstPost'), "it's false by default");
 
   const post = Discourse.Post.create({id: 123, post_number: 2});
-  composer.setProperties({post: post, action: Discourse.Composer.EDIT });
+  composer.setProperties({post: post, action: Composer.EDIT });
   ok(!composer.get('editingFirstPost'), "it's false when not editing the first post");
 
   post.set('post_number', 1);
@@ -165,36 +192,20 @@ test('clearState', function() {
 
 test('initial category when uncategorized is allowed', function() {
   Discourse.SiteSettings.allow_uncategorized_topics = true;
-  const composer = Discourse.Composer.open({action: 'createTopic', draftKey: 'asfd', draftSequence: 1});
-  equal(composer.get('categoryId'),undefined,"Uncategorized by default");
+  const composer = openComposer({action: 'createTopic', draftKey: 'asfd', draftSequence: 1});
+  ok(!composer.get('categoryId'), "Uncategorized by default");
 });
 
 test('initial category when uncategorized is not allowed', function() {
   Discourse.SiteSettings.allow_uncategorized_topics = false;
-  const composer = Discourse.Composer.open({action: 'createTopic', draftKey: 'asfd', draftSequence: 1});
-  ok(composer.get('categoryId') === undefined, "Uncategorized by default. Must choose a category.");
-});
-
-test('showPreview', function() {
-  const newComposer = function() {
-    return Discourse.Composer.open({action: 'createTopic', draftKey: 'asfd', draftSequence: 1});
-  };
-
-  Discourse.Mobile.mobileView = true;
-  equal(newComposer().get('showPreview'), false, "Don't show preview in mobile view");
-
-  Discourse.KeyValueStore.set({ key: 'composer.showPreview', value: 'true' });
-  equal(newComposer().get('showPreview'), false, "Don't show preview in mobile view even if KeyValueStore wants to");
-  Discourse.KeyValueStore.remove('composer.showPreview');
-
-  Discourse.Mobile.mobileView = false;
-  equal(newComposer().get('showPreview'), true, "Show preview by default in desktop view");
+  const composer = openComposer({action: 'createTopic', draftKey: 'asfd', draftSequence: 1});
+  ok(!composer.get('categoryId'), "Uncategorized by default. Must choose a category.");
 });
 
 test('open with a quote', function() {
   const quote = '[quote="neil, post:5, topic:413"]\nSimmer down you two.\n[/quote]';
   const newComposer = function() {
-    return Discourse.Composer.open({action: Discourse.Composer.REPLY, draftKey: 'asfd', draftSequence: 1, quote: quote});
+    return openComposer({action: Composer.REPLY, draftKey: 'asfd', draftSequence: 1, quote: quote});
   };
 
   equal(newComposer().get('originalText'), quote, "originalText is the quote" );
@@ -207,7 +218,7 @@ test("Title length for static page topics as admin", function() {
   const composer = createComposer();
 
   const post = Discourse.Post.create({id: 123, post_number: 2, static_doc: true});
-  composer.setProperties({post: post, action: Discourse.Composer.EDIT });
+  composer.setProperties({post: post, action: Composer.EDIT });
 
   composer.set('title', 'asdf');
   ok(composer.get('titleLengthValid'), "admins can use short titles");
@@ -220,4 +231,28 @@ test("Title length for static page topics as admin", function() {
 
   composer.set('title', '');
   ok(!composer.get('titleLengthValid'), "admins must set title to at least 1 character");
+});
+
+test("title placeholder depends on what you're doing", function() {
+  let composer = createComposer({action: Composer.CREATE_TOPIC});
+  equal(composer.get('titlePlaceholder'), 'composer.title_placeholder', "placeholder for normal topic");
+
+  composer = createComposer({action: Composer.PRIVATE_MESSAGE});
+  equal(composer.get('titlePlaceholder'), 'composer.title_placeholder', "placeholder for private message");
+
+  Discourse.SiteSettings.topic_featured_link_enabled = true;
+
+  composer = createComposer({action: Composer.CREATE_TOPIC});
+  equal(composer.get('titlePlaceholder'), 'composer.title_or_link_placeholder', "placeholder invites you to paste a link");
+
+  composer = createComposer({action: Composer.PRIVATE_MESSAGE});
+  equal(composer.get('titlePlaceholder'), 'composer.title_placeholder', "placeholder for private message with topic links enabled");
+});
+
+test("allows featured link before choosing a category", function() {
+  Discourse.SiteSettings.topic_featured_link_enabled = true;
+  Discourse.SiteSettings.allow_uncategorized_topics = false;
+  let composer = createComposer({action: Composer.CREATE_TOPIC});
+  equal(composer.get('titlePlaceholder'), 'composer.title_or_link_placeholder', "placeholder invites you to paste a link");
+  ok(composer.get('canEditTopicFeaturedLink'), "can paste link");
 });

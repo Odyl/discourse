@@ -1,3 +1,4 @@
-export default Ember.Handlebars.makeBoundHelper(function(dt) {
-  return new Handlebars.SafeString(Discourse.Formatter.autoUpdatingRelativeAge(new Date(dt), {format: 'medium', title: true }));
-});
+import { autoUpdatingRelativeAge } from 'discourse/lib/formatter';
+import { htmlHelper } from 'discourse-common/lib/helpers';
+
+export default htmlHelper(dt => autoUpdatingRelativeAge(new Date(dt), {format: 'medium', title: true }));

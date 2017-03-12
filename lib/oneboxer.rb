@@ -1,11 +1,7 @@
-
-Dir["#{Rails.root}/lib/onebox/engine/*_onebox.rb"].each {|f|
-  require_dependency(f.split('/')[-3..-1].join('/'))
-}
+require_dependency "#{Rails.root}/lib/onebox/discourse_onebox_sanitize_config"
+Dir["#{Rails.root}/lib/onebox/engine/*_onebox.rb"].sort.each { |f| require f }
 
 module Oneboxer
-
-
   # keep reloaders happy
   unless defined? Oneboxer::Result
     Result = Struct.new(:doc, :changed) do
@@ -21,13 +17,13 @@ module Oneboxer
 
   def self.preview(url, options=nil)
     options ||= {}
-    Oneboxer.invalidate(url) if options[:invalidate_oneboxes]
+    invalidate(url) if options[:invalidate_oneboxes]
     onebox_raw(url)[:preview]
   end
 
   def self.onebox(url, options=nil)
     options ||= {}
-    Oneboxer.invalidate(url) if options[:invalidate_oneboxes]
+    invalidate(url) if options[:invalidate_oneboxes]
     onebox_raw(url)[:onebox]
   end
 
@@ -51,10 +47,6 @@ module Oneboxer
     ""
   end
 
-  def self.oneboxer_exists_for_url?(url)
-    Onebox.has_matcher?(url)
-  end
-
   def self.invalidate(url)
     Rails.cache.delete(onebox_cache_key(url))
   end
@@ -67,28 +59,44 @@ module Oneboxer
     onebox_links = doc.search("a.onebox")
     if onebox_links.present?
       onebox_links.each do |link|
-        if link['href'].present?
-          yield link['href'], link
-        end
+        yield(link['href'], link) if link['href'].present?
       end
     end
 
     doc
   end
 
-  def self.apply(string_or_doc)
+  def self.append_source_topic_id(url, topic_id)
+    # hack urls to create proper expansions
+    if url =~ Regexp.new("^#{Discourse.base_url.gsub(".","\\.")}.*$", true)
+      uri = URI.parse(url) rescue nil
+      if uri && uri.path
+        route = Rails.application.routes.recognize_path(uri.path) rescue nil
+        if route && route[:controller] == 'topics'
+          url += (url =~ /\?/ ? "&" : "?") + "source_topic_id=#{topic_id}"
+        end
+      end
+    end
+    url
+  end
+
+  def self.apply(string_or_doc, args=nil)
     doc = string_or_doc
     doc = Nokogiri::HTML::fragment(doc) if doc.is_a?(String)
     changed = false
 
-    Oneboxer.each_onebox_link(doc) do |url, element|
-      onebox, preview = yield(url,element)
+    each_onebox_link(doc) do |url, element|
+      if args && args[:topic_id]
+        url = append_source_topic_id(url, args[:topic_id])
+      end
+      onebox, _preview = yield(url,element)
       if onebox
         parsed_onebox = Nokogiri::HTML::fragment(onebox)
         next unless parsed_onebox.children.count > 0
 
         # special logic to strip empty p elements
         if  element.parent &&
+            element.parent.node_name &&
             element.parent.node_name.downcase == "p" &&
             element.parent.children.count == 1
           element = element.parent
@@ -101,37 +109,50 @@ module Oneboxer
     Result.new(doc, changed)
   end
 
+  def self.is_previewing?(user_id)
+    $redis.get(preview_key(user_id)) == "1"
+  end
+
+  def self.preview_onebox!(user_id)
+    $redis.setex(preview_key(user_id), 1.minute, "1")
+  end
+
+  def self.onebox_previewed!(user_id)
+    $redis.del(preview_key(user_id))
+  end
+
+  def self.engine(url)
+    Onebox::Matcher.new(url).oneboxed
+  end
+
   private
-  def self.onebox_cache_key(url)
-    "onebox__#{url}"
-  end
 
-  def self.add_discourse_whitelists
-    # Add custom domain whitelists
-    if SiteSetting.onebox_domains_whitelist.present?
-      domains = SiteSetting.onebox_domains_whitelist.split('|')
-      whitelist = Onebox::Engine::WhitelistedGenericOnebox.whitelist
-      whitelist.concat(domains)
-      whitelist.uniq!
+    def self.preview_key(user_id)
+      "onebox:preview:#{user_id}"
     end
-  end
 
-  def self.onebox_raw(url)
-    Rails.cache.fetch(onebox_cache_key(url), expires_in: 1.day){
-      # This might be able to move to whenever the SiteSetting changes?
-      Oneboxer.add_discourse_whitelists
+    def self.blank_onebox
+      { preview: "", onebox: "" }
+    end
 
-      r = Onebox.preview(url, cache: {}, max_width: 695)
-      {
-        onebox: r.to_s,
-        preview: r.try(:placeholder_html).to_s
-      }
-    }
-  rescue => e
-    Discourse.handle_job_exception(e, message: "While trying to onebox a URL", url: url)
-    # return a blank hash, so rest of the code works
-    {preview: "", onebox: ""}
-  end
+    def self.onebox_cache_key(url)
+      "onebox__#{url}"
+    end
+
+    def self.onebox_raw(url)
+      Rails.cache.fetch(onebox_cache_key(url), expires_in: 1.day) do
+        uri = URI(url) rescue nil
+        return blank_onebox if uri.blank? || SiteSetting.onebox_domains_blacklist.include?(uri.hostname)
+        options = { cache: {}, max_width: 695, sanitize_config: Sanitize::Config::DISCOURSE_ONEBOX }
+        r = Onebox.preview(url, options)
+        { onebox: r.to_s, preview: r.try(:placeholder_html).to_s }
+      end
+    rescue => e
+      # no point warning here, just cause we have an issue oneboxing a url
+      # we can later hunt for failed oneboxes by searching logs if needed
+      Rails.logger.info("Failed to onebox #{url} #{e} #{e.backtrace}")
+      # return a blank hash, so rest of the code works
+      blank_onebox
+    end
 
 end
-

@@ -1,3 +1,5 @@
+import PreloadStore from 'preload-store';
+
 export default {
   name: "banner",
   after: "message-bus",
@@ -12,8 +14,8 @@ export default {
     const messageBus = container.lookup('message-bus:main');
     if (!messageBus) { return; }
 
-    messageBus.subscribe("/site/banner", function (banner) {
-      site.set("banner", Em.Object.create(banner));
+    messageBus.subscribe("/site/banner", function (ban) {
+      site.set("banner", Em.Object.create(ban));
     });
   }
 };

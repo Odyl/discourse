@@ -28,18 +28,96 @@ class NewPostManager
     @sorted_handlers.sort_by! {|h| -h[:priority]}
   end
 
-  def self.user_needs_approval?(user)
-    (user.post_count < SiteSetting.approve_post_count) ||
-      (user.trust_level < SiteSetting.approve_unless_trust_level.to_i)
+  def self.is_first_post?(manager)
+    user = manager.user
+    args = manager.args
+
+    !!(
+      args[:first_post_checks] &&
+      user.post_count == 0
+    )
+  end
+
+  def self.is_fast_typer?(manager)
+    args = manager.args
+
+    is_first_post?(manager) &&
+    args[:typing_duration_msecs].to_i < SiteSetting.min_first_post_typing_time &&
+    SiteSetting.auto_block_fast_typers_on_first_post &&
+    manager.user.trust_level <= SiteSetting.auto_block_fast_typers_max_trust_level
+  end
+
+  def self.matches_auto_block_regex?(manager)
+    args = manager.args
+
+    pattern = SiteSetting.auto_block_first_post_regex
+
+    return false unless pattern.present?
+    return false unless is_first_post?(manager)
+
+    begin
+      regex = Regexp.new(pattern, Regexp::IGNORECASE)
+    rescue => e
+      Rails.logger.warn "Invalid regex in auto_block_first_post_regex #{e}"
+      return false
+    end
+
+    "#{args[:title]} #{args[:raw]}" =~ regex
+
+  end
+
+  def self.user_needs_approval?(manager)
+    user = manager.user
+
+    return false if user.staff? || user.staged
+
+    (user.trust_level <= TrustLevel.levels[:basic] && user.post_count < SiteSetting.approve_post_count) ||
+    (user.trust_level < SiteSetting.approve_unless_trust_level.to_i) ||
+    (manager.args[:title].present? && user.trust_level < SiteSetting.approve_new_topics_unless_trust_level.to_i) ||
+    is_fast_typer?(manager) ||
+    matches_auto_block_regex?(manager)
   end
 
   def self.default_handler(manager)
-    manager.enqueue('default') if user_needs_approval?(manager.user)
+    if user_needs_approval?(manager)
+
+      validator = Validators::PostValidator.new
+      post = Post.new(raw: manager.args[:raw])
+      post.user = manager.user
+      validator.validate(post)
+      if post.errors[:raw].present?
+        result = NewPostResult.new(:created_post, false)
+        result.errors[:base] = post.errors[:raw]
+        return result
+      end
+
+      # Can the user create the post in the first place?
+      if manager.args[:topic_id]
+        topic = Topic.unscoped.where(id: manager.args[:topic_id]).first
+
+        unless manager.user.guardian.can_create_post_on_topic?(topic)
+          result = NewPostResult.new(:created_post, false)
+          result.errors[:base] << I18n.t(:topic_not_found)
+          return result
+        end
+      end
+
+      result = manager.enqueue('default')
+
+      if is_fast_typer?(manager)
+        UserBlocker.block(manager.user, Discourse.system_user, keep_posts: true, reason: I18n.t("user.new_user_typed_too_fast"))
+      elsif matches_auto_block_regex?(manager)
+        UserBlocker.block(manager.user, Discourse.system_user, keep_posts: true, reason: I18n.t("user.content_matches_auto_block_regex"))
+      end
+
+      result
+    end
   end
 
   def self.queue_enabled?
     SiteSetting.approve_post_count > 0 ||
     SiteSetting.approve_unless_trust_level.to_i > 0 ||
+    SiteSetting.approve_new_topics_unless_trust_level.to_i > 0 ||
     handlers.size > 1
   end
 
@@ -49,7 +127,6 @@ class NewPostManager
   end
 
   def perform
-
     # We never queue private messages
     return perform_create_post if @args[:archetype] == Archetype.private_message
     if args[:topic_id] && Topic.where(id: args[:topic_id], archetype: Archetype.private_message).exists?
@@ -89,7 +166,6 @@ class NewPostManager
 
   def perform_create_post
     result = NewPostResult.new(:create_post)
-
     creator = PostCreator.new(@user, @args)
     post = creator.create
     result.check_errors_from(creator)

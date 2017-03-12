@@ -139,7 +139,22 @@ class Autospec::Manager
     @queue.shift if current[0] == "focus"
     # focus on the first 10 failed specs
     failed_specs = runner.failed_specs[0..10]
-    puts "@@@@@@@@@@@@ failed_spces --> #{failed_specs}" if @debug
+    puts "@@@@@@@@@@@@ failed_specs --> #{failed_specs}" if @debug
+
+    # try focus tag
+    if failed_specs.length > 0
+      filename,_ = failed_specs[0].split(":")
+      if filename
+        spec = File.read(filename)
+        start,_ =  spec.split(/\S*#focus\S*$/)
+        if start.length < spec.length
+          line = start.scan(/\n/).length + 1
+          puts "Found #focus tag on line #{line}!"
+          failed_specs = ["#{filename}:#{line+1}"]
+        end
+      end
+    end
+
     # focus on the failed specs
     @queue.unshift ["focus", failed_specs.join(" "), runner] if failed_specs.length > 0
   end
@@ -148,8 +163,7 @@ class Autospec::Manager
     puts "@@@@@@@@@@@@ listen_for_changes" if @debug
 
     options = {
-      ignore: /^public|^lib\/autospec/,
-      relative_paths: true,
+      ignore: /^lib\/autospec/,
     }
 
     if @opts[:force_polling]
@@ -157,11 +171,27 @@ class Autospec::Manager
       options[:latency] = @opts[:latency] || 3
     end
 
-    Thread.start do
-      Listen.to('.', options) do |modified, added, _|
-        process_change([modified, added].flatten.compact)
+    path = File.expand_path(File.dirname(__FILE__) + "../../..")
+
+    # to speed up boot we use a thread
+    ["spec", "lib", "app", "config", "test", "vendor", "plugins"].each do |watch|
+
+      puts "@@@@@@@@@ Listen to #{path}/#{watch} #{options}" if @debug
+      Thread.new do
+        begin
+          Listen.to("#{path}/#{watch}", options) do |modified, added, _|
+            paths = [modified, added].flatten
+            paths.compact!
+            paths.map!{|long| long[(path.length+1)..-1]}
+            process_change(paths)
+          end
+        rescue => e
+          puts "FAILED to listen on changes to #{path}/#{watch}"
+          puts e
+        end
       end
     end
+
   end
 
   def process_change(files)

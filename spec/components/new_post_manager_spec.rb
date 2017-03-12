@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'new_post_manager'
 
 describe NewPostManager do
@@ -69,9 +69,10 @@ describe NewPostManager do
       end
     end
 
-    context 'with a high approval post count' do
+    context 'with a high approval post count and TL0' do
       before do
         SiteSetting.approve_post_count = 100
+        topic.user.trust_level = 0
       end
       it "will return an enqueue result" do
         result = NewPostManager.default_handler(manager)
@@ -80,9 +81,57 @@ describe NewPostManager do
       end
     end
 
+    context 'with a high approval post count and TL1' do
+      before do
+        SiteSetting.approve_post_count = 100
+        topic.user.trust_level = 1
+      end
+      it "will return an enqueue result" do
+        result = NewPostManager.default_handler(manager)
+        expect(NewPostManager.queue_enabled?).to eq(true)
+        expect(result.action).to eq(:enqueued)
+      end
+    end
+
+    context 'with a high approval post count, but TL2' do
+      before do
+        SiteSetting.approve_post_count = 100
+        topic.user.trust_level = 2
+      end
+      it "will return an enqueue result" do
+        result = NewPostManager.default_handler(manager)
+        expect(result).to be_nil
+      end
+    end
+
     context 'with a high trust level setting' do
       before do
         SiteSetting.approve_unless_trust_level = 4
+      end
+      it "will return an enqueue result" do
+        result = NewPostManager.default_handler(manager)
+        expect(NewPostManager.queue_enabled?).to eq(true)
+        expect(result.action).to eq(:enqueued)
+      end
+    end
+
+    context 'with a high trust level setting for new topics but post responds to existing topic' do
+      before do
+        SiteSetting.approve_new_topics_unless_trust_level = 4
+      end
+      it "doesn't return a result action" do
+        result = NewPostManager.default_handler(manager)
+        expect(result).to eq(nil)
+      end
+    end
+
+  end
+
+  context "new topic handler" do
+    let(:manager) { NewPostManager.new(topic.user, raw: 'this is new topic content', title: 'new topic title') }
+    context 'with a high trust level setting for new topics' do
+      before do
+        SiteSetting.approve_new_topics_unless_trust_level = 4
       end
       it "will return an enqueue result" do
         result = NewPostManager.default_handler(manager)
@@ -190,6 +239,37 @@ describe NewPostManager do
       expect(@counter).to be(0)
     end
 
+  end
+
+
+  context "user needs approval?" do
+
+    let :user do
+      user = Fabricate.build(:user, trust_level: 0)
+      user_stat = UserStat.new(post_count: 0)
+      user.user_stat = user_stat
+      user
+    end
+
+
+
+    it "handles user_needs_approval? correctly" do
+      u = user
+      default = NewPostManager.new(u,{})
+      expect(NewPostManager.user_needs_approval?(default)).to eq(false)
+
+      with_check = NewPostManager.new(u, first_post_checks: true)
+      expect(NewPostManager.user_needs_approval?(with_check)).to eq(true)
+
+      u.user_stat.post_count = 1
+      with_check_and_post = NewPostManager.new(u, first_post_checks: true)
+      expect(NewPostManager.user_needs_approval?(with_check_and_post)).to eq(false)
+
+      u.user_stat.post_count = 0
+      u.trust_level = 1
+      with_check_tl1 = NewPostManager.new(u, first_post_checks: true)
+      expect(NewPostManager.user_needs_approval?(with_check_tl1)).to eq(false)
+    end
   end
 
 end

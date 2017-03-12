@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe ListController do
 
@@ -32,12 +32,6 @@ describe ListController do
       end
     end
 
-    Discourse.logged_in_filters.each do |filter|
-      context "#{filter}" do
-        it { expect { xhr :get, filter }.to raise_error(Discourse::NotLoggedIn) }
-      end
-    end
-
     it 'allows users to filter on a set of topic ids' do
       p = create_post
 
@@ -47,18 +41,19 @@ describe ListController do
       expect(parsed["topic_list"]["topics"].length).to eq(1)
     end
 
+
+    it "doesn't throw an error with a negative page" do
+      xhr :get, :top, page: -1024
+      expect(response).to be_success
+    end
   end
 
   describe 'RSS feeds' do
 
-    Discourse.feed_filters.each do |filter|
-
-      it 'renders RSS' do
-        get "#{filter}_feed", format: :rss
-        expect(response).to be_success
-        expect(response.content_type).to eq('application/rss+xml')
-      end
-
+    it 'renders RSS' do
+      get "latest_feed", format: :rss
+      expect(response).to be_success
+      expect(response.content_type).to eq('application/rss+xml')
     end
 
   end
@@ -91,6 +86,26 @@ describe ListController do
         end
 
         it { is_expected.to respond_with(:success) }
+      end
+
+      context 'with a link that has a parent slug, slug and id in its path' do
+        let(:child_category) { Fabricate(:category, parent_category: category) }
+
+        context "with valid slug" do
+          before do
+            xhr :get, :category_latest, parent_category: category.slug, category: child_category.slug, id: child_category.id
+          end
+
+          it { is_expected.to redirect_to(child_category.url) }
+        end
+
+        context "with invalid slug" do
+          before do
+            xhr :get, :category_latest, parent_category: 'random slug', category: 'random slug', id: child_category.id
+          end
+
+          it { is_expected.to redirect_to(child_category.url) }
+        end
       end
 
       context 'another category exists with a number at the beginning of its name' do
@@ -126,7 +141,6 @@ describe ListController do
 
           it { is_expected.not_to respond_with(:success) }
         end
-
       end
 
       describe 'feed' do
@@ -134,6 +148,29 @@ describe ListController do
           get :category_feed, category: category.slug, format: :rss
           expect(response).to be_success
           expect(response.content_type).to eq('application/rss+xml')
+        end
+      end
+
+      describe "category default views" do
+        it "top default view" do
+          category.update_attributes!(default_view: 'top')
+          described_class.expects(:best_period_for).returns('yearly')
+          xhr :get, :category_default, category: category.slug
+          expect(response).to be_success
+        end
+
+        it "default view is nil" do
+          category.update_attributes!(default_view: nil)
+          described_class.expects(:best_period_for).never
+          xhr :get, :category_default, category: category.slug
+          expect(response).to be_success
+        end
+
+        it "default view is latest" do
+          category.update_attributes!(default_view: 'latest')
+          described_class.expects(:best_period_for).never
+          xhr :get, :category_default, category: category.slug
+          expect(response).to be_success
         end
       end
     end
@@ -214,26 +251,106 @@ describe ListController do
   describe "best_periods_for" do
 
     it "returns yearly for more than 180 days" do
+      SiteSetting.top_page_default_timeframe = 'all'
       expect(ListController.best_periods_for(nil)).to eq([:yearly])
       expect(ListController.best_periods_for(180.days.ago)).to eq([:yearly])
     end
 
     it "includes monthly when less than 180 days and more than 35 days" do
+      SiteSetting.top_page_default_timeframe = 'all'
       (35...180).each do |date|
         expect(ListController.best_periods_for(date.days.ago)).to eq([:monthly, :yearly])
       end
     end
 
     it "includes weekly when less than 35 days and more than 8 days" do
+      SiteSetting.top_page_default_timeframe = 'all'
       (8...35).each do |date|
         expect(ListController.best_periods_for(date.days.ago)).to eq([:weekly, :monthly, :yearly])
       end
     end
 
     it "includes daily when less than 8 days" do
+      SiteSetting.top_page_default_timeframe = 'all'
       (0...8).each do |date|
         expect(ListController.best_periods_for(date.days.ago)).to eq([:daily, :weekly, :monthly, :yearly])
       end
+    end
+
+    it "returns default even for more than 180 days" do
+      SiteSetting.top_page_default_timeframe = 'monthly'
+      expect(ListController.best_periods_for(nil)).to eq([:monthly, :yearly])
+      expect(ListController.best_periods_for(180.days.ago)).to eq([:monthly, :yearly])
+    end
+
+    it "returns default even when less than 180 days and more than 35 days" do
+      SiteSetting.top_page_default_timeframe = 'weekly'
+      (35...180).each do |date|
+        expect(ListController.best_periods_for(date.days.ago)).to eq([:weekly, :monthly, :yearly])
+      end
+    end
+
+    it "returns default even when less than 35 days and more than 8 days" do
+      SiteSetting.top_page_default_timeframe = 'daily'
+      (8...35).each do |date|
+        expect(ListController.best_periods_for(date.days.ago)).to eq([:daily, :weekly, :monthly, :yearly])
+      end
+    end
+
+    it "doesn't return default when set to all" do
+      SiteSetting.top_page_default_timeframe = 'all'
+      expect(ListController.best_periods_for(nil)).to eq([:yearly])
+    end
+
+    it "doesn't return value twice when matches default" do
+      SiteSetting.top_page_default_timeframe = 'yearly'
+      expect(ListController.best_periods_for(nil)).to eq([:yearly])
+    end
+
+  end
+
+  describe "categories suppression" do
+    let(:category_one) { Fabricate(:category) }
+    let(:sub_category) { Fabricate(:category, parent_category: category_one, suppress_from_homepage: true) }
+    let!(:topic_in_sub_category) { Fabricate(:topic, category: sub_category) }
+
+    let(:category_two) { Fabricate(:category, suppress_from_homepage: true) }
+    let!(:topic_in_category_two) { Fabricate(:topic, category: category_two) }
+
+    it "suppresses categories from the homepage" do
+      get SiteSetting.homepage, format: :json
+      expect(response).to be_success
+
+      topic_titles = JSON.parse(response.body)["topic_list"]["topics"].map { |t| t["title"] }
+      expect(topic_titles).not_to include(topic_in_sub_category.title, topic_in_category_two.title)
+    end
+
+    it "does not suppress" do
+      get SiteSetting.homepage, category: category_one.id, format: :json
+      expect(response).to be_success
+
+      topic_titles = JSON.parse(response.body)["topic_list"]["topics"].map { |t| t["title"] }
+      expect(topic_titles).to include(topic_in_sub_category.title)
+    end
+
+  end
+
+  describe "safe mode" do
+    render_views
+
+    it "handles safe mode" do
+      get :latest
+      expect(response.body).to match(/plugin\.js/)
+      expect(response.body).to match(/plugin-third-party\.js/)
+
+      get :latest, safe_mode: "no_plugins"
+      expect(response.body).not_to match(/plugin\.js/)
+      expect(response.body).not_to match(/plugin-third-party\.js/)
+
+      get :latest, safe_mode: "only_official"
+      expect(response.body).to match(/plugin\.js/)
+      expect(response.body).not_to match(/plugin-third-party\.js/)
+
     end
 
   end

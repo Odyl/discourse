@@ -1,8 +1,23 @@
 class UserVisit < ActiveRecord::Base
 
-  # A count of visits in the last month by day
-  def self.by_day(start_date, end_date)
-    where('visited_at >= ? and visited_at <= ?', start_date.to_date, end_date.to_date).group(:visited_at).order(:visited_at).count
+  def self.counts_by_day_query(start_date, end_date, group_id=nil)
+    result = where('visited_at >= ? and visited_at <= ?', start_date.to_date, end_date.to_date)
+
+    if group_id
+      result = result.joins("INNER JOIN users ON users.id = user_visits.user_id")
+      result = result.joins("INNER JOIN group_users ON group_users.user_id = users.id")
+      result = result.where("group_users.group_id = ?", group_id)
+    end
+    result.group(:visited_at).order(:visited_at)
+  end
+
+  # A count of visits in a date range by day
+  def self.by_day(start_date, end_date, group_id=nil)
+    counts_by_day_query(start_date, end_date, group_id).count
+  end
+
+  def self.mobile_by_day(start_date, end_date, group_id=nil)
+    counts_by_day_query(start_date, end_date, group_id).where(mobile: true).count
   end
 
   def self.ensure_consistency!
@@ -27,8 +42,10 @@ end
 #  user_id    :integer          not null
 #  visited_at :date             not null
 #  posts_read :integer          default(0)
+#  mobile     :boolean          default(FALSE)
 #
 # Indexes
 #
 #  index_user_visits_on_user_id_and_visited_at  (user_id,visited_at) UNIQUE
+#  index_user_visits_on_visited_at_and_mobile   (visited_at,mobile)
 #

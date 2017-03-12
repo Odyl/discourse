@@ -1,8 +1,14 @@
-/* global asyncTest */
+/* global asyncTest, fixtures */
 
 import sessionFixtures from 'fixtures/session-fixtures';
-import siteFixtures from 'fixtures/site_fixtures';
-import HeaderView from 'discourse/views/header';
+import siteFixtures from 'fixtures/site-fixtures';
+import HeaderComponent from 'discourse/components/site-header';
+import { forceMobile, resetMobile } from 'discourse/lib/mobile';
+import { resetPluginApi } from 'discourse/lib/plugin-api';
+import { clearCache as clearOutletCache, resetExtraClasses } from 'discourse/lib/plugin-connectors';
+import { clearHTMLCache } from 'discourse/helpers/custom-html';
+import { flushMap } from 'discourse/models/store';
+
 
 function currentUser() {
   return Discourse.User.create(sessionFixtures['/session/current.json'].current_user);
@@ -32,22 +38,23 @@ function AcceptanceModal(option, _relatedTarget) {
 window.bootbox.$body = $('#ember-testing');
 $.fn.modal = AcceptanceModal;
 
-var oldAvatar = Discourse.Utilities.avatarImg;
-
 function acceptance(name, options) {
   module("Acceptance: " + name, {
-    setup: function() {
-      // Don't render avatars in acceptance tests, it's faster and no 404s
-      Discourse.Utilities.avatarImg = () => "";
+    setup() {
+      resetMobile();
 
       // For now don't do scrolling stuff in Test Mode
-      Ember.CloakedCollectionView.scrolled = Ember.K;
-      HeaderView.reopen({examineDockHeader: Ember.K});
+      HeaderComponent.reopen({examineDockHeader: Ember.K});
 
-      var siteJson = siteFixtures['site.json'].site;
+      resetExtraClasses();
+      const siteJson = siteFixtures['site.json'].site;
       if (options) {
         if (options.setup) {
           options.setup.call(this);
+        }
+
+        if (options.mobileView) {
+          forceMobile();
         }
 
         if (options.loggedIn) {
@@ -63,17 +70,24 @@ function acceptance(name, options) {
         }
       }
 
+      clearOutletCache();
+      clearHTMLCache();
+      resetPluginApi();
       Discourse.reset();
     },
 
-    teardown: function() {
+    teardown() {
       if (options && options.teardown) {
         options.teardown.call(this);
       }
+      flushMap();
       Discourse.User.resetCurrent();
-      Discourse.Site.resetCurrent(Discourse.Site.create(fixtures['site.json'].site));
+      Discourse.Site.resetCurrent(Discourse.Site.create(jQuery.extend(true, {}, fixtures['site.json'].site)));
 
-      Discourse.Utilities.avatarImg = oldAvatar;
+      resetExtraClasses();
+      clearOutletCache();
+      clearHTMLCache();
+      resetPluginApi();
       Discourse.reset();
     }
   });
@@ -101,4 +115,29 @@ function fixture(selector) {
   return $("#qunit-fixture");
 }
 
-export { acceptance, controllerFor, asyncTestDiscourse, fixture, logIn, currentUser };
+function present(obj, text) {
+  ok(!Ember.isEmpty(obj), text);
+}
+
+function blank(obj, text) {
+  ok(Ember.isEmpty(obj), text);
+}
+
+function waitFor(callback, timeout) {
+  timeout = timeout || 500;
+  stop();
+  Ember.run.later(() => {
+    callback();
+    start();
+  }, timeout);
+}
+
+export { acceptance,
+         controllerFor,
+         asyncTestDiscourse,
+         fixture,
+         logIn,
+         currentUser,
+         blank,
+         present,
+         waitFor };

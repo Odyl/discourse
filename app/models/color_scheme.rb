@@ -1,6 +1,37 @@
 require_dependency 'sass/discourse_stylesheets'
+require_dependency 'distributed_cache'
 
 class ColorScheme < ActiveRecord::Base
+
+  def self.themes
+    base_with_hash = {}
+    base_colors.each do |name, color|
+      base_with_hash[name] = "##{color}"
+    end
+
+    [
+      { id: 'default', colors: base_with_hash },
+      {
+        id: 'dark',
+        colors: {
+          "primary" =>           '#dddddd',
+          "secondary" =>         '#222222',
+          "tertiary" =>          '#0f82af',
+          "quaternary" =>        '#c14924',
+          "header_background" => '#111111',
+          "header_primary" =>    '#333333',
+          "highlight" =>         '#a87137',
+          "danger" =>            '#e45735',
+          "success" =>           '#1ca551',
+          "love" =>              '#fa6c8d'
+        }
+      }
+    ]
+  end
+
+  def self.hex_cache
+    @hex_cache ||= DistributedCache.new("scheme_hex_for_name")
+  end
 
   attr_accessor :is_base
 
@@ -12,6 +43,8 @@ class ColorScheme < ActiveRecord::Base
 
   after_destroy :destroy_versions
   after_save :publish_discourse_stylesheet
+  after_save :dump_hex_cache
+  after_destroy :dump_hex_cache
 
   validates_associated :color_scheme_colors
 
@@ -23,16 +56,12 @@ class ColorScheme < ActiveRecord::Base
     @mutex.synchronize do
       return @base_colors if @base_colors
       @base_colors = {}
-      read_colors_file.each do |line|
+      File.readlines(BASE_COLORS_FILE).each do |line|
         matches = /\$([\w]+):\s*#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})(?:[;]|\s)/.match(line.strip)
         @base_colors[matches[1]] = matches[2] if matches
       end
     end
     @base_colors
-  end
-
-  def self.read_colors_file
-    File.readlines(BASE_COLORS_FILE)
   end
 
   def self.enabled
@@ -63,9 +92,21 @@ class ColorScheme < ActiveRecord::Base
     new_color_scheme
   end
 
-  def self.hex_for_name(name)
+  def self.lookup_hex_for_name(name)
+    Discourse.plugin_themes.each do |pt|
+      if pt.color_scheme
+        found = pt.color_scheme[name.to_sym]
+        return found if found
+      end
+    end
+
     # Can't use `where` here because base doesn't allow it
-    (enabled || base).colors.find {|c| c.name == name }.try(:hex)
+    (enabled || base).colors.find {|c| c.name == name }.try(:hex) || :nil
+  end
+
+  def self.hex_for_name(name)
+    hex_cache[name] ||= lookup_hex_for_name(name)
+    hex_cache[name] == :nil ? nil : hex_cache[name]
   end
 
   def colors=(arr)
@@ -101,6 +142,10 @@ class ColorScheme < ActiveRecord::Base
     DiscourseStylesheets.cache.clear
   end
 
+  def dump_hex_cache
+    self.class.hex_cache.clear
+  end
+
 end
 
 # == Schema Information
@@ -108,10 +153,12 @@ end
 # Table name: color_schemes
 #
 #  id           :integer          not null, primary key
-#  name         :string(255)      not null
+#  name         :string           not null
 #  enabled      :boolean          default(FALSE), not null
 #  versioned_id :integer
 #  version      :integer          default(1), not null
 #  created_at   :datetime         not null
 #  updated_at   :datetime         not null
+#  via_wizard   :boolean          default(FALSE), not null
+#  theme_id     :string
 #

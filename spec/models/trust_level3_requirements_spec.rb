@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe TrustLevel3Requirements do
 
@@ -14,6 +14,11 @@ describe TrustLevel3Requirements do
   end
 
   describe "requirements" do
+    it "time_period uses site setting" do
+      SiteSetting.stubs(:tl3_time_period).returns(80)
+      expect(tl3_requirements.time_period).to eq(80)
+    end
+
     it "min_days_visited uses site setting" do
       SiteSetting.stubs(:tl3_requires_days_visited).returns(66)
       expect(tl3_requirements.min_days_visited).to eq(66)
@@ -30,10 +35,24 @@ describe TrustLevel3Requirements do
       expect(tl3_requirements.min_topics_viewed).to eq(23)
     end
 
+    it "min_topics_viewed is capped" do
+      SiteSetting.tl3_requires_topics_viewed = 75
+      described_class.stubs(:num_topics_in_time_period).returns(31)
+      SiteSetting.tl3_requires_topics_viewed_cap = 20
+      expect(tl3_requirements.min_topics_viewed).to eq(20)
+    end
+
     it "min_posts_read depends on site setting and number of posts created" do
       SiteSetting.stubs(:tl3_requires_posts_read).returns(66)
       described_class.stubs(:num_posts_in_time_period).returns(1234)
       expect(tl3_requirements.min_posts_read).to eq(814)
+    end
+
+    it "min_posts_read is capped" do
+      SiteSetting.tl3_requires_posts_read = 66
+      described_class.stubs(:num_posts_in_time_period).returns(1234)
+      SiteSetting.tl3_requires_posts_read_cap = 600
+      expect(tl3_requirements.min_posts_read).to eq(600)
     end
 
     it "min_topics_viewed_all_time depends on site setting" do
@@ -62,16 +81,41 @@ describe TrustLevel3Requirements do
       expect(tl3_requirements.min_likes_received_days).to eq(7)
       expect(tl3_requirements.min_likes_received_users).to eq(5)
     end
+
+    it "min_likes_received_days is capped" do
+      SiteSetting.tl3_requires_likes_received = 600
+      expect(tl3_requirements.min_likes_received).to eq(600)
+      expect(tl3_requirements.min_likes_received_days).to eq(75) # 0.75 * tl3_time_period
+    end
+
+    it "min_likes_received_days works when time_period is 1" do
+      SiteSetting.tl3_requires_likes_received = 20
+      SiteSetting.tl3_time_period = 1
+      expect(tl3_requirements.min_likes_received).to eq(20)
+      expect(tl3_requirements.min_likes_received_days).to eq(1)
+      expect(tl3_requirements.min_likes_received_users).to eq(5)
+    end
   end
 
   describe "days_visited" do
-    it "counts visits when posts were read no further back than 100 days ago" do
+    it "counts visits when posts were read no further back than 100 days (default time period) ago" do
       user.save
-      user.update_posts_read!(1, 2.days.ago)
-      user.update_posts_read!(1, 3.days.ago)
-      user.update_posts_read!(0, 4.days.ago)
-      user.update_posts_read!(3, 101.days.ago)
+      user.update_posts_read!(1, at: 2.days.ago)
+      user.update_posts_read!(1, at: 3.days.ago)
+      user.update_posts_read!(0, at: 4.days.ago)
+      user.update_posts_read!(3, at: 101.days.ago)
       expect(tl3_requirements.days_visited).to eq(2)
+    end
+
+    it "respects tl3_time_period setting" do
+      SiteSetting.tl3_time_period = 200
+      user.save
+      user.update_posts_read!(1, at: 2.days.ago)
+      user.update_posts_read!(1, at: 3.days.ago)
+      user.update_posts_read!(0, at: 4.days.ago)
+      user.update_posts_read!(3, at: 101.days.ago)
+      user.update_posts_read!(4, at: 201.days.ago)
+      expect(tl3_requirements.days_visited).to eq(3)
     end
   end
 
@@ -93,7 +137,7 @@ describe TrustLevel3Requirements do
   end
 
   describe "topics_viewed" do
-    it "counts topics views within last 100 days, not counting a topic more than once" do
+    it "counts topics views within last 100 days (default time period), not counting a topic more than once" do
       user.save
       make_view(9, 1.day.ago,    user.id)
       make_view(9, 3.days.ago,   user.id) # same topic, different day
@@ -101,15 +145,26 @@ describe TrustLevel3Requirements do
       make_view(2, 101.days.ago, user.id) # too long ago
       expect(tl3_requirements.topics_viewed).to eq(2)
     end
+
+    it "counts topics views within last 200 days, respecting tl3_time_period setting" do
+      SiteSetting.tl3_time_period = 200
+      user.save
+      make_view(9, 1.day.ago,    user.id)
+      make_view(9, 3.days.ago,   user.id) # same topic, different day
+      make_view(3, 4.days.ago,   user.id)
+      make_view(2, 101.days.ago, user.id)
+      make_view(4, 201.days.ago, user.id) # too long ago
+      expect(tl3_requirements.topics_viewed).to eq(3)
+    end
   end
 
   describe "posts_read" do
     it "counts posts read within the last 100 days" do
       user.save
-      user.update_posts_read!(3, 2.days.ago)
-      user.update_posts_read!(1, 3.days.ago)
-      user.update_posts_read!(0, 4.days.ago)
-      user.update_posts_read!(5, 101.days.ago)
+      user.update_posts_read!(3, at: 2.days.ago)
+      user.update_posts_read!(1, at: 3.days.ago)
+      user.update_posts_read!(0, at: 4.days.ago)
+      user.update_posts_read!(5, at: 101.days.ago)
       expect(tl3_requirements.posts_read).to eq(4)
     end
   end
@@ -127,8 +182,8 @@ describe TrustLevel3Requirements do
   describe "posts_read_all_time" do
     it "counts posts read at any time" do
       user.save
-      user.update_posts_read!(3, 2.days.ago)
-      user.update_posts_read!(1, 101.days.ago)
+      user.update_posts_read!(3, at: 2.days.ago)
+      user.update_posts_read!(1, at: 101.days.ago)
       expect(tl3_requirements.posts_read_all_time).to eq(4)
     end
   end
@@ -166,7 +221,7 @@ describe TrustLevel3Requirements do
 
   describe "num_likes_given" do
     it "counts likes given in the last 100 days" do
-      ActiveRecord::Base.observers.enable :user_action_observer
+      UserActionCreator.enable
 
       recent_post1 = create_post(created_at: 1.hour.ago)
       recent_post2 = create_post(created_at: 10.days.ago)
@@ -182,7 +237,7 @@ describe TrustLevel3Requirements do
 
   describe "num_likes_received" do
     it "counts likes received in the last 100 days" do
-      ActiveRecord::Base.observers.enable :user_action_observer
+      UserActionCreator.enable
 
       t = Fabricate(:topic, user: user, created_at: 102.days.ago)
       old_post     = create_post(topic: t, user: user, created_at: 102.days.ago)
@@ -202,7 +257,7 @@ describe TrustLevel3Requirements do
     end
   end
 
-  describe "requirements" do
+  context "requirements with defaults" do
 
     before do
       tl3_requirements.stubs(:min_days_visited).returns(50)

@@ -1,6 +1,5 @@
-import DiscourseController from 'discourse/controllers/controller';
-
-export default DiscourseController.extend({
+import { ajax } from 'discourse/lib/ajax';
+export default Ember.Controller.extend({
 
   /**
     Is the "send test email" button disabled?
@@ -31,7 +30,7 @@ export default DiscourseController.extend({
       });
 
       var self = this;
-      Discourse.ajax("/admin/email/test", {
+      ajax("/admin/email/test", {
         type: 'POST',
         data: { email_address: this.get('testEmailAddress') }
       }).then(function () {

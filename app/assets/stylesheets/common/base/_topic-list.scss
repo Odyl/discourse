@@ -1,8 +1,10 @@
 .show-more {
-  position: absolute;
-  top: 4px;
   width: 100%;
   z-index: 1;
+  &.has-topics {
+    position: absolute;
+    top: 7px;
+  }
 }
 
 .list-controls {
@@ -14,10 +16,12 @@
   }
 }
 
+html.anon .topic-list a.title:visited:not(.badge-notification) {color: dark-light-diff($primary, $secondary, 45%, -30%);}
+.topic-list a.title.visited:not(.badge-notification) {color: dark-light-diff($primary, $secondary, 45%, -30%);}
+
 .topic-list {
   width: 100%;
   border-collapse: collapse;
-  background: rgba($secondary, .8);
 
   > tbody > tr {
     &.has-excerpt .star {
@@ -25,6 +29,32 @@
       margin-top: 2px;
     }
     border-bottom: 1px solid dark-light-diff($primary, $secondary, 90%, -75%);
+
+    &.last-visit {
+      border-bottom: none;
+    }
+
+    .topic-list-separator {
+      text-align: center;
+    }
+  }
+
+  .topic-list-item-separator {
+    border: none;
+
+    td {
+      border-bottom: 1px solid scale-color($danger, $lightness: 60%);
+      line-height: 0.1em;
+      padding: 0px;
+      text-align: center;
+    }
+
+    td span {
+      background-color: $secondary;
+      color: scale-color($danger, $lightness: 60%);
+      padding: 0px 8px;
+      font-size: 0.929em;
+    }
   }
 
   > tbody > tr:first-of-type {
@@ -39,14 +69,14 @@
 
   }
   th {
-    color: scale-color($primary, $lightness: 50%);
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
     font-weight: normal;
     font-size: 1em;
-    button i.fa {color: scale-color($primary, $lightness: 50%);}
+    button i.fa {color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));}
 
   }
   td {
-    color: scale-color($primary, $lightness: 50%);
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
     font-size: 1em;
   }
 
@@ -54,13 +84,18 @@
     font-size: 1.143em;
     a.title {
       padding: 15px 0;
+      word-break: break-word;
     }
+  }
+
+  .topic-featured-link {
+    padding-left: 5px;
   }
 
   .topic-excerpt {
     font-size: 0.929em;
     margin-top: 8px;
-    color: scale-color($primary, $lightness: 50%);
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
     word-wrap: break-word;
     line-height: 1.4;
     padding-right: 20px;
@@ -100,7 +135,6 @@
   }
 
 }
-
 
 .topic-list.categories {
 
@@ -179,6 +213,10 @@
   }
 }
 
+ol.category-breadcrumb.hidden {
+  display: none;
+}
+
 ol.category-breadcrumb {
   display: block;
   float: left;
@@ -190,13 +228,17 @@ ol.category-breadcrumb {
     float: left;
     margin-right: 5px;
   }
+
+  .bread-crumbs-right-outlet {
+    float: left;
+  }
 }
 
 .list-controls .category-dropdown-menu {
   overflow-x: hidden;
   overflow-y: auto;
   position: absolute;
-  border: 1px solid scale-color-diff();
+  border: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
   background-color: $secondary;
   z-index: 100;
 
@@ -216,8 +258,11 @@ ol.category-breadcrumb {
 }
 
 .fa-thumb-tack.unpinned {
-  @include fa-icon-rotate(315deg, 1);
+  @include fa-icon-rotate(180deg, 1);
   color: $primary;
+  /* because it is rotated, right becomes left! */
+  padding-left: 3px;
+  padding-right: 0 !important;
 }
 
 .topic-statuses .fa {
@@ -231,6 +276,15 @@ ol.category-breadcrumb {
   h2 {
     float: left;
     margin: 5px 0 10px;
+    .top-date-string {
+      font-size: 0.7em;
+    }
+  }
+
+  .top-date-string {
+    color: dark-light-choose(scale-color($primary, $lightness: 60%), scale-color($secondary, $lightness: 40%));
+    font-weight: normal;
+    text-transform: uppercase;
   }
 
   button {
@@ -245,11 +299,12 @@ ol.category-breadcrumb {
 
     @include unselectable;
 
-    border: 1px solid scale-color-diff();
+    font-size: 1.2em;
+    border: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
     padding: 5px;
     background: $secondary;
     position: absolute;
-    z-index: 1110;
+    z-index: 999;
     box-shadow: 0 2px 2px rgba(0,0,0, .4);
 
     ul {
@@ -260,9 +315,15 @@ ol.category-breadcrumb {
       li {
         margin: 0;
         padding: 0;
-        a {
+        font-weight: bold;
+        a, a:visited {
           display: block;
           padding: 5px;
+          color: $primary;
+        }
+        .top-date-string {
+          font-weight: normal;
+          font-size: 0.8em;
         }
         &:hover {
           background-color: dark-light-diff($highlight, $secondary, 50%, -70%);
@@ -281,5 +342,5 @@ ol.category-breadcrumb {
 }
 
 div.education {
-  color: scale-color($primary, $lightness: 50%);
+  color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
 }

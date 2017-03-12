@@ -41,7 +41,7 @@ hr {
   height: 1px;
   margin: 1em 0;
   border: 0;
-  border-top: 1px solid scale-color-diff();
+  border-top: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
   padding: 0;
 }
 
@@ -85,6 +85,7 @@ fieldset {
 
 pre code {
   overflow: auto;
+  tab-size: 4;
 }
 
 // TODO figure out a clean place to put stuff like this

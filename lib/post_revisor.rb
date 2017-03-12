@@ -72,12 +72,46 @@ class PostRevisor
     tc.check_result(tc.topic.change_category_to_id(category_id))
   end
 
+  track_topic_field(:tags) do |tc, tags|
+    if tc.guardian.can_tag_topics?
+      prev_tags = tc.topic.tags.map(&:name)
+      next if tags.blank? && prev_tags.blank?
+      if !DiscourseTagging.tag_topic_by_names(tc.topic, tc.guardian, tags)
+        tc.check_result(false)
+        next
+      end
+      tc.record_change('tags', prev_tags, tags) unless prev_tags.sort == tags.sort
+    end
+  end
+
+  track_topic_field(:tags_empty_array) do |tc, val|
+    if val.present? && tc.guardian.can_tag_topics?
+      prev_tags = tc.topic.tags.map(&:name)
+      if !DiscourseTagging.tag_topic_by_names(tc.topic, tc.guardian, [])
+        tc.check_result(false)
+        next
+      end
+      tc.record_change('tags', prev_tags, nil)
+    end
+  end
+
+  track_topic_field(:featured_link) do |topic_changes, featured_link|
+    if SiteSetting.topic_featured_link_enabled &&
+       featured_link.present? &&
+       topic_changes.guardian.can_edit_featured_link?(topic_changes.topic.category_id)
+
+      topic_changes.record_change('featured_link', topic_changes.topic.featured_link, featured_link)
+      topic_changes.topic.featured_link = featured_link
+    end
+  end
+
   # AVAILABLE OPTIONS:
   # - revised_at: changes the date of the revision
   # - force_new_version: bypass ninja-edit window
   # - bypass_rate_limiter:
   # - bypass_bump: do not bump the topic, even if last post
   # - skip_validations: ask ActiveRecord to skip validations
+  # - skip_revision: do not create a new PostRevision record
   def revise!(editor, fields, opts={})
     @editor = editor
     @fields = fields.with_indifferent_access
@@ -91,7 +125,7 @@ class PostRevisor
     @fields[:category_id] = @fields[:category_id].to_i if @fields.has_key?(:category_id)
 
     # always reset edit_reason unless provided
-    @fields[:edit_reason] = nil unless @fields.has_key?(:edit_reason)
+    @fields[:edit_reason] = nil unless @fields[:edit_reason].present?
 
     return false unless should_revise?
 
@@ -111,9 +145,13 @@ class PostRevisor
     @validate_topic = @opts[:validate_topic] if @opts.has_key?(:validate_topic)
     @validate_topic = !@opts[:validate_topic] if @opts.has_key?(:skip_validations)
 
+    @skip_revision = false
+    @skip_revision = @opts[:skip_revision] if @opts.has_key?(:skip_revision)
+
     Post.transaction do
       revise_post
 
+      yield if block_given?
       # TODO: these callbacks are being called in a transaction
       # it is kind of odd, because the callback is called "before_edit"
       # but the post is already edited at this point
@@ -136,6 +174,9 @@ class PostRevisor
     publish_changes
     grant_badge
 
+    TopicLink.extract_from(@post)
+    QuotedPost.extract_from(@post)
+
     successfully_saved_post_and_topic
   end
 
@@ -151,6 +192,7 @@ class PostRevisor
     POST_TRACKED_FIELDS.each do |field|
       return true if @fields.has_key?(field) && @fields[field] != @post.send(field)
     end
+    advance_draft_sequence
     false
   end
 
@@ -163,6 +205,7 @@ class PostRevisor
   end
 
   def should_create_new_version?
+    return false if @skip_revision
     edited_by_another_user? || !ninja_edit? || owner_changed? || force_new_version?
   end
 
@@ -171,7 +214,8 @@ class PostRevisor
   end
 
   def ninja_edit?
-    @revised_at - @last_version_at <= SiteSetting.ninja_edit_window.to_i
+    return false if @post.has_active_flag?
+    @revised_at - @last_version_at <= SiteSetting.editing_grace_period.to_i
   end
 
   def owner_changed?
@@ -199,17 +243,26 @@ class PostRevisor
     create_or_update_revision
   end
 
-  def update_post
-    prev_owner, new_owner = nil, nil
-    if @fields.has_key?("user_id") && @fields["user_id"] != @post.user_id
-      prev_owner = User.find_by_id(@post.user_id)
-      new_owner = User.find_by_id(@fields["user_id"])
+  USER_ACTIONS_TO_REMOVE ||= [UserAction::REPLY, UserAction::RESPONSE]
 
-      UserAction.where( target_post_id: @post.id,
-                        user_id: prev_owner.id,
-                        action_type: [UserAction::NEW_TOPIC, UserAction::REPLY, UserAction::RESPONSE] )
-                .find_each { |ua| ua.destroy }
-      # UserActionObserver will create new UserAction records for the new owner
+  def update_post
+    if @fields.has_key?("user_id") && @fields["user_id"] != @post.user_id && @post.user_id != nil
+      prev_owner = User.find(@post.user_id)
+      new_owner = User.find(@fields["user_id"])
+
+      # UserActionCreator will create new UserAction records for the new owner
+
+      UserAction.where(target_post_id: @post.id)
+                .where(user_id: prev_owner.id)
+                .where(action_type: USER_ACTIONS_TO_REMOVE)
+                .destroy_all
+
+      if @post.post_number == 1
+        UserAction.where(target_topic_id: @post.topic_id)
+                  .where(user_id: prev_owner.id)
+                  .where(action_type: UserAction::NEW_TOPIC)
+                  .destroy_all
+      end
     end
 
     POST_TRACKED_FIELDS.each do |field|
@@ -217,10 +270,10 @@ class PostRevisor
     end
 
     @post.last_editor_id = @editor.id
-    @post.word_count     = @fields[:raw].scan(/\w+/).size if @fields.has_key?(:raw)
+    @post.word_count     = @fields[:raw].scan(/[[:word:]]+/).size if @fields.has_key?(:raw)
     @post.self_edits    += 1 if self_edit?
 
-    clear_flags_and_unhide_post
+    remove_flags_and_unhide_post
 
     @post.extract_quoted_post_numbers
 
@@ -229,24 +282,31 @@ class PostRevisor
 
     # post owner changed
     if prev_owner && new_owner && prev_owner != new_owner
-      likes = UserAction.where( target_post_id: @post.id,
-                                user_id: prev_owner.id,
-                                action_type: UserAction::WAS_LIKED ).update_all(user_id: new_owner.id)
+      likes = UserAction.where(target_post_id: @post.id)
+                        .where(user_id: prev_owner.id)
+                        .where(action_type: UserAction::WAS_LIKED)
+                        .update_all(user_id: new_owner.id)
 
-      prev_owner.user_stat.post_count -= 1
-      prev_owner.user_stat.topic_count -= 1 if @post.is_first_post?
-      prev_owner.user_stat.likes_received -= likes
-      prev_owner.user_stat.update_topic_reply_count
+      private_message = @post.topic.private_message?
+
+      prev_owner_user_stat = prev_owner.user_stat
+      prev_owner_user_stat.post_count -= 1
+      prev_owner_user_stat.topic_count -= 1 if @post.is_first_post?
+      prev_owner_user_stat.likes_received -= likes if !private_message
+      prev_owner_user_stat.update_topic_reply_count
+
       if @post.created_at == prev_owner.user_stat.first_post_created_at
-        prev_owner.user_stat.first_post_created_at = prev_owner.posts.order('created_at ASC').first.try(:created_at)
+        prev_owner_user_stat.first_post_created_at = prev_owner.posts.order('created_at ASC').first.try(:created_at)
       end
-      prev_owner.user_stat.save
 
-      new_owner.user_stat.post_count += 1
-      new_owner.user_stat.topic_count += 1 if @post.is_first_post?
-      new_owner.user_stat.likes_received += likes
-      new_owner.user_stat.update_topic_reply_count
-      new_owner.user_stat.save
+      prev_owner_user_stat.save!
+
+      new_owner_user_stat = new_owner.user_stat
+      new_owner_user_stat.post_count += 1
+      new_owner_user_stat.topic_count += 1 if @post.is_first_post?
+      new_owner_user_stat.likes_received += likes if !private_message
+      new_owner_user_stat.update_topic_reply_count
+      new_owner_user_stat.save!
     end
   end
 
@@ -254,9 +314,11 @@ class PostRevisor
     @editor == @post.user
   end
 
-  def clear_flags_and_unhide_post
+  def remove_flags_and_unhide_post
     return unless editing_a_flagged_and_hidden_post?
-    PostAction.clear_flags!(@post, Discourse.system_user)
+    @post.post_actions.where(post_action_type_id: PostActionType.flag_types.values).each do |action|
+      action.remove_act!(Discourse.system_user)
+    end
     @post.unhide!
   end
 
@@ -281,6 +343,7 @@ class PostRevisor
   end
 
   def create_or_update_revision
+    return if @skip_revision
     # don't create an empty revision if something failed
     return unless successfully_saved_post_and_topic
     @version_changed ? create_revision : update_revision
@@ -302,14 +365,26 @@ class PostRevisor
     modifications = post_changes.merge(@topic_changes.diff)
     modifications.each_key do |field|
       if revision.modifications.has_key?(field)
-        old_value = revision.modifications[field][0]
-        new_value = modifications[field][1]
-        revision.modifications[field] = [old_value, new_value]
+        old_value = revision.modifications[field][0].to_s
+        new_value = modifications[field][1].to_s
+        if old_value != new_value
+          revision.modifications[field] = [old_value, new_value]
+        else
+          revision.modifications.delete(field)
+        end
       else
         revision.modifications[field] = modifications[field]
       end
     end
-    revision.save if modifications.length
+    # should probably do this before saving the post!
+    if revision.modifications.empty?
+      revision.destroy
+      @post.version -= 1
+      @post.public_version -= 1
+      @post.save
+    else
+      revision.save
+    end
   end
 
   def post_changes
@@ -332,7 +407,7 @@ class PostRevisor
   end
 
   def bypass_bump?
-    !@post_successfully_saved || @opts[:bypass_bump] == true
+    !@post_successfully_saved || @topic_changes.errored? || @opts[:bypass_bump] == true
   end
 
   def is_last_post?
@@ -364,14 +439,14 @@ class PostRevisor
   def update_category_description
     return unless category = Category.find_by(topic_id: @topic.id)
 
-    body = @post.cooked
-    matches = body.scan(/\<p\>(.*)\<\/p\>/)
-    if matches && matches[0] && matches[0][0]
-      new_description = matches[0][0]
-      new_description = nil if new_description == I18n.t("category.replace_paragraph")
-      category.update_column(:description, new_description)
-      @category_changed = category
-    end
+    doc = Nokogiri::HTML.fragment(@post.cooked)
+    doc.css("img").remove
+
+    html = doc.css("p").first.inner_html.strip
+    new_description = html unless html.starts_with?(Category.post_template[0..50])
+
+    category.update_column(:description, new_description)
+    @category_changed = category
   end
 
   def advance_draft_sequence
@@ -381,6 +456,7 @@ class PostRevisor
   def post_process_post
     @post.invalidate_oneboxes = true
     @post.trigger_post_process
+    DiscourseEvent.trigger(:post_edited, @post, self.topic_changed?)
   end
 
   def update_topic_word_counts
@@ -398,7 +474,14 @@ class PostRevisor
   end
 
   def publish_changes
-    @post.publish_change_to_clients!(:revised)
+    options =
+      if !@topic_changes.diff.empty? && !@topic_changes.errored?
+        { reload_topic: true }
+      else
+        {}
+      end
+
+    @post.publish_change_to_clients!(:revised, options)
   end
 
   def grant_badge
@@ -410,4 +493,3 @@ class PostRevisor
   end
 
 end
-

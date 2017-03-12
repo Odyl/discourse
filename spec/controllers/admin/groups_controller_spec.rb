@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe Admin::GroupsController do
 
@@ -19,7 +19,9 @@ describe Admin::GroupsController do
 
       xhr :get, :index
       expect(response.status).to eq(200)
-      expect(::JSON.parse(response.body).keep_if {|r| r["id"] == group.id }).to eq([{
+      json = ::JSON.parse(response.body)
+      expect(json.select { |r| r["id"] == Group::AUTO_GROUPS[:everyone] }).to be_empty
+      expect(json.select { |r| r["id"] == group.id }).to eq([{
         "id"=>group.id,
         "name"=>group.name,
         "user_count"=>1,
@@ -29,16 +31,50 @@ describe Admin::GroupsController do
         "automatic_membership_email_domains"=>nil,
         "automatic_membership_retroactive"=>false,
         "title"=>nil,
-        "primary_group"=>false
+        "primary_group"=>false,
+        "grant_trust_level"=>nil,
+        "incoming_email"=>nil,
+        "has_messages"=>false,
+        "flair_url"=>nil,
+        "flair_bg_color"=>nil,
+        "flair_color"=>nil,
+        "bio_raw"=>nil,
+        "bio_cooked"=>nil,
+        "public"=>false,
+        "allow_membership_requests"=>false,
+        "full_name"=>group.full_name
       }])
+
     end
 
+  end
+
+  context ".bulk" do
+    it "can assign users to a group by email or username" do
+      group = Fabricate(:group, name: "test", primary_group: true, title: 'WAT', grant_trust_level: 3)
+      user = Fabricate(:user, trust_level: 2)
+      user2 = Fabricate(:user, trust_level: 4)
+
+      xhr :put, :bulk_perform, group_id: group.id, users: [user.username.upcase, user2.email, 'doesnt_exist']
+
+      expect(response).to be_success
+
+      user.reload
+      expect(user.primary_group).to eq(group)
+      expect(user.title).to eq("WAT")
+      expect(user.trust_level).to eq(3)
+
+      user2.reload
+      expect(user2.primary_group).to eq(group)
+      expect(user2.title).to eq("WAT")
+      expect(user2.trust_level).to eq(4)
+    end
   end
 
   context ".create" do
 
     it "strip spaces on the group name" do
-      xhr :post, :create, name: " bob "
+      xhr :post, :create, { group: { name: " bob " } }
 
       expect(response.status).to eq(200)
 
@@ -53,25 +89,33 @@ describe Admin::GroupsController do
   context ".update" do
 
     it "ignore name change on automatic group" do
-      xhr :put, :update, id: 1, name: "WAT", visible: "true"
+      expect do
+        xhr :put, :update, { id: 1, group: {
+          name: "WAT",
+          visible: "true",
+          allow_membership_requests: "true"
+        } }
+      end.to change { GroupHistory.count }.by(1)
+
       expect(response).to be_success
 
       group = Group.find(1)
       expect(group.name).not_to eq("WAT")
       expect(group.visible).to eq(true)
+      expect(group.allow_membership_requests).to eq(true)
     end
 
     it "doesn't launch the 'automatic group membership' job when it's not retroactive" do
       Jobs.expects(:enqueue).never
       group = Fabricate(:group)
-      xhr :put, :update, id: group.id, automatic_membership_retroactive: "false"
+      xhr :put, :update, { id: group.id, group: { automatic_membership_retroactive: "false" } }
       expect(response).to be_success
     end
 
     it "launches the 'automatic group membership' job when it's retroactive" do
       group = Fabricate(:group)
       Jobs.expects(:enqueue).with(:automatic_group_membership, group_id: group.id)
-      xhr :put, :update, id: group.id, automatic_membership_retroactive: "true"
+      xhr :put, :update, { id: group.id, group: { automatic_membership_retroactive: "true" } }
       expect(response).to be_success
     end
 
@@ -102,94 +146,6 @@ describe Admin::GroupsController do
 
       xhr :post, :refresh_automatic_groups
       expect(response.status).to eq(200)
-    end
-
-  end
-
-  context ".add_members" do
-
-    it "cannot add members to automatic groups" do
-      xhr :put, :add_members, id: 1, usernames: "l77t"
-      expect(response.status).to eq(422)
-    end
-
-    context "is able to add several members to a group" do
-
-      let(:user1) { Fabricate(:user) }
-      let(:user2) { Fabricate(:user) }
-      let(:group) { Fabricate(:group) }
-
-      it "adds by username" do
-        xhr :put, :add_members, id: group.id, usernames: [user1.username, user2.username].join(",")
-
-        expect(response).to be_success
-        group.reload
-        expect(group.users.count).to eq(2)
-      end
-
-      it "adds by id" do
-        xhr :put, :add_members, id: group.id, user_ids: [user1.id, user2.id].join(",")
-
-        expect(response).to be_success
-        group.reload
-        expect(group.users.count).to eq(2)
-      end
-    end
-
-    it "returns 422 if member already exists" do
-      group = Fabricate(:group)
-      existing_member = Fabricate(:user)
-      group.add(existing_member)
-      group.save
-
-      xhr :put, :add_members, id: group.id, usernames: existing_member.username
-      expect(response.status).to eq(422)
-    end
-
-  end
-
-  context ".remove_member" do
-
-    it "cannot remove members from automatic groups" do
-      xhr :put, :remove_member, id: 1, user_id: 42
-      expect(response.status).to eq(422)
-    end
-
-    context "is able to remove a member" do
-
-      let(:user) { Fabricate(:user) }
-      let(:group) { Fabricate(:group) }
-
-      before do
-        group.add(user)
-        group.save
-      end
-
-      it "removes by id" do
-        xhr :delete, :remove_member, id: group.id, user_id: user.id
-
-        expect(response).to be_success
-        group.reload
-        expect(group.users.count).to eq(0)
-      end
-
-      it "removes by username" do
-        xhr :delete, :remove_member, id: group.id, username: user.username
-
-        expect(response).to be_success
-        group.reload
-        expect(group.users.count).to eq(0)
-      end
-
-      it "removes user.primary_group_id when user is removed from group" do
-        user.primary_group_id = group.id
-        user.save
-
-        xhr :delete, :remove_member, id: group.id, username: user.username
-
-        user.reload
-        expect(user.primary_group_id).to eq(nil)
-      end
     end
 
   end

@@ -22,11 +22,15 @@ class PostMover
   def to_new_topic(title, category_id=nil)
     @move_type = PostMover.move_types[:new_topic]
 
+    post = Post.find_by(id: post_ids.first)
+    raise Discourse::InvalidParameters unless post
+
     Topic.transaction do
       move_posts_to Topic.create!(
-        user: user,
+        user: post.user,
         title: title,
-        category_id: category_id
+        category_id: category_id,
+        created_at: post.created_at
       )
     end
   end
@@ -37,11 +41,17 @@ class PostMover
     Guardian.new(user).ensure_can_see! topic
     @destination_topic = topic
 
+    moving_all_posts = (@original_topic.posts.pluck(:id).sort == @post_ids.sort)
+
     move_each_post
     notify_users_that_posts_have_moved
     update_statistics
     update_user_actions
     set_last_post_user_id(destination_topic)
+
+    if moving_all_posts
+      @original_topic.update_status('closed', true, @user)
+    end
 
     destination_topic.reload
     destination_topic
@@ -66,6 +76,12 @@ class PostMover
     posts.each do |post|
       post.is_first_post? ? create_first_post(post) : move(post)
     end
+
+    PostReply.where("reply_id in (:post_ids) OR post_id in (:post_ids)", post_ids: post_ids).each do |post_reply|
+      if post_reply.post && post_reply.reply && post_reply.reply.topic_id != post_reply.post.topic_id
+        PostReply.delete_all(reply_id: post_reply.reply.id, post_id: post_reply.post.id)
+      end
+    end
   end
 
   def create_first_post(post)
@@ -73,7 +89,8 @@ class PostMover
       post.user,
       raw: post.raw,
       topic_id: destination_topic.id,
-      acting_user: user
+      acting_user: user,
+      skip_validations: true
     )
     p.update_column(:reply_count, @reply_count[1] || 0)
   end
@@ -103,6 +120,8 @@ class PostMover
   def update_statistics
     destination_topic.update_statistics
     original_topic.update_statistics
+    TopicUser.update_post_action_cache(topic_id: original_topic.id, post_action_type: :bookmark)
+    TopicUser.update_post_action_cache(topic_id: destination_topic.id, post_action_type: :bookmark)
   end
 
   def update_user_actions
@@ -123,18 +142,22 @@ class PostMover
   end
 
   def create_moderator_post_in_original_topic
+    move_type_str = PostMover.move_types[@move_type].to_s
+
     original_topic.add_moderator_post(
       user,
-      I18n.t("move_posts.#{PostMover.move_types[@move_type]}_moderator_post",
+      I18n.t("move_posts.#{move_type_str}_moderator_post",
              count: post_ids.count,
-             topic_link: "[#{destination_topic.title}](#{destination_topic.url})"),
+             topic_link: "[#{destination_topic.title}](#{destination_topic.relative_url})"),
+      post_type: Post.types[:small_action],
+      action_code: "split_topic",
       post_number: @first_post_number_moved
     )
   end
 
   def posts
     @posts ||= begin
-      Post.where(id: post_ids).order(:created_at).tap do |posts|
+      Post.where(topic: @original_topic, id: post_ids).order(:created_at).tap do |posts|
         raise Discourse::InvalidParameters.new(:post_ids) if posts.empty?
       end
     end

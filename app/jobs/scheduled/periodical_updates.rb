@@ -7,22 +7,32 @@ module Jobs
   class PeriodicalUpdates < Jobs::Scheduled
     every 15.minutes
 
-    def execute(args)
+    def self.should_update_long_topics?
+      @call_count ||= 0
+      @call_count += 1
 
+      # once every 6 hours
+      (@call_count % 24) == 1
+    end
+
+    def execute(args)
       # Feature topics in categories
       CategoryFeaturedTopic.feature_topics
 
       # Update the scores of posts
-      ScoreCalculator.new.calculate(1.day.ago)
+      args = {min_topic_age: 1.day.ago}
+      args[:max_topic_length] = 500 unless self.class.should_update_long_topics?
+      ScoreCalculator.new.calculate(args)
 
       # Automatically close stuff that we missed
       Topic.auto_close
 
       # Forces rebake of old posts where needed, as long as no system avatars need updating
       unless UserAvatar.where("last_gravatar_download_attempt IS NULL").limit(1).first
-        problems = Post.rebake_old(250)
+        problems = Post.rebake_old(SiteSetting.rebake_old_posts_count)
         problems.each do |hash|
-          Discourse.handle_job_exception(hash[:ex], error_context(args, "Rebaking post id #{hash[:post].id}", post_id: hash[:post].id))
+          post_id = hash[:post].id
+          Discourse.handle_job_exception(hash[:ex], error_context(args, "Rebaking post id #{post_id}", post_id: post_id))
         end
       end
 
@@ -32,6 +42,14 @@ module Jobs
         user_id = hash[:profile].user_id
         Discourse.handle_job_exception(hash[:ex], error_context(args, "Rebaking user id #{user_id}", user_id: user_id))
       end
+
+      offset = (SiteSetting.max_new_topics).to_i
+      last_new_topic = Topic.order('created_at desc').offset(offset).select(:created_at).first
+      if last_new_topic
+        SiteSetting.min_new_topics_time = last_new_topic.created_at.to_i
+      end
+
+      nil
     end
 
   end

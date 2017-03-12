@@ -1,10 +1,10 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'post_destroyer'
 
 describe PostDestroyer do
 
   before do
-    ActiveRecord::Base.observers.enable :all
+    UserActionCreator.enable
   end
 
   let(:moderator) { Fabricate(:moderator) }
@@ -142,51 +142,118 @@ describe PostDestroyer do
     end
   end
 
+  describe "recovery and user actions" do
+    it "recreates user actions" do
+      reply = create_post(topic: post.topic)
+      author = reply.user
+
+      post_action = author.user_actions.where(action_type: UserAction::REPLY, target_post_id: reply.id).first
+      expect(post_action).to be_present
+
+      PostDestroyer.new(moderator, reply).destroy
+
+      # User Action is removed
+      post_action = author.user_actions.where(action_type: UserAction::REPLY, target_post_id: reply.id).first
+      expect(post_action).to be_blank
+
+      PostDestroyer.new(moderator, reply).recover
+
+      # On recovery, the user action is recreated
+      post_action = author.user_actions.where(action_type: UserAction::REPLY, target_post_id: reply.id).first
+      expect(post_action).to be_present
+    end
+
+    describe "post_count recovery" do
+      before do
+        post
+        @user = post.user
+        expect(@user.user_stat.post_count).to eq(1)
+      end
+
+      context "recovered by user" do
+        it "should increment the user's post count" do
+          PostDestroyer.new(@user, post).destroy
+          expect(@user.user_stat.post_count).to eq(1)
+
+          PostDestroyer.new(@user, post.reload).recover
+          expect(@user.reload.user_stat.post_count).to eq(1)
+        end
+      end
+
+      context "recovered by admin" do
+        it "should increment the user's post count" do
+          PostDestroyer.new(moderator, post).destroy
+          expect(@user.user_stat.post_count).to eq(0)
+
+          PostDestroyer.new(admin, post).recover
+          expect(@user.reload.user_stat.post_count).to eq(1)
+        end
+      end
+    end
+  end
+
   describe 'basic destroying' do
-
     it "as the creator of the post, doesn't delete the post" do
-      SiteSetting.stubs(:unique_posts_mins).returns(5)
-      SiteSetting.stubs(:delete_removed_posts_after).returns(24)
+      begin
+        post2 = create_post
 
-      post2 = create_post # Create it here instead of with "let" so unique_posts_mins can do its thing
+        called = 0
+        topic_destroyed = -> (topic, user) do
+          expect(topic).to eq(post2.topic)
+          expect(user).to eq(post2.user)
+          called += 1
+        end
 
-      @orig = post2.cooked
-      PostDestroyer.new(post2.user, post2).destroy
-      post2.reload
+        DiscourseEvent.on(:topic_destroyed, &topic_destroyed)
 
-      expect(post2.deleted_at).to be_blank
-      expect(post2.deleted_by).to be_blank
-      expect(post2.user_deleted).to eq(true)
-      expect(post2.raw).to eq(I18n.t('js.post.deleted_by_author', {count: 24}))
-      expect(post2.version).to eq(2)
+        @orig = post2.cooked
+        PostDestroyer.new(post2.user, post2).destroy
+        post2.reload
 
-      # lets try to recover
-      PostDestroyer.new(post2.user, post2).recover
-      post2.reload
-      expect(post2.version).to eq(3)
-      expect(post2.user_deleted).to eq(false)
-      expect(post2.cooked).to eq(@orig)
+        expect(post2.deleted_at).to be_blank
+        expect(post2.deleted_by).to be_blank
+        expect(post2.user_deleted).to eq(true)
+        expect(post2.raw).to eq(I18n.t('js.post.deleted_by_author', {count: 24}))
+        expect(post2.version).to eq(2)
+        expect(called).to eq(1)
+
+        called = 0
+        topic_recovered = -> (topic, user) do
+          expect(topic).to eq(post2.topic)
+          expect(user).to eq(post2.user)
+          called += 1
+        end
+
+        DiscourseEvent.on(:topic_recovered, &topic_recovered)
+
+        # lets try to recover
+        PostDestroyer.new(post2.user, post2).recover
+        post2.reload
+        expect(post2.version).to eq(3)
+        expect(post2.user_deleted).to eq(false)
+        expect(post2.cooked).to eq(@orig)
+        expect(called).to eq(1)
+      ensure
+        DiscourseEvent.off(:topic_destroyed, &topic_destroyed)
+        DiscourseEvent.off(:topic_recovered, &topic_recovered)
+      end
     end
 
     context "as a moderator" do
       it "deletes the post" do
+        author = post.user
+
+        post_count = author.post_count
+        history_count = UserHistory.count
+
         PostDestroyer.new(moderator, post).destroy
+
         expect(post.deleted_at).to be_present
         expect(post.deleted_by).to eq(moderator)
-      end
 
-      it "updates the user's post_count" do
-        author = post.user
-        expect {
-          PostDestroyer.new(moderator, post).destroy
-          author.reload
-        }.to change { author.post_count }.by(-1)
-      end
-
-      it "creates a new user history entry" do
-        expect {
-          PostDestroyer.new(moderator, post).destroy
-        }.to change { UserHistory.count}.by(1)
+        author.reload
+        expect(author.post_count).to eq(post_count - 1)
+        expect(UserHistory.count).to eq(history_count + 1)
       end
     end
 

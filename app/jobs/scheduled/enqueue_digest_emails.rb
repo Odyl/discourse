@@ -2,7 +2,7 @@ module Jobs
 
   # A daily job that will enqueue digest emails to be sent to users
   class EnqueueDigestEmails < Jobs::Scheduled
-    every 6.hours
+    every 30.minutes
 
     def execute(args)
       unless SiteSetting.disable_digest_emails?
@@ -13,18 +13,20 @@ module Jobs
     end
 
     def target_user_ids
-      # Users who want to receive emails and haven't been emailed in the last day
+      # Users who want to receive digest email within their chosen digest email frequency
       query = User.real
-                  .where(email_digests: true, active: true)
                   .not_suspended
-                  .where("COALESCE(last_emailed_at, '2010-01-01') <= CURRENT_TIMESTAMP - ('1 DAY'::INTERVAL * digest_after_days)")
-                  .where("(COALESCE(last_seen_at, '2010-01-01') <= CURRENT_TIMESTAMP - ('1 DAY'::INTERVAL * digest_after_days)) AND
-                           COALESCE(last_seen_at, '2010-01-01') >= CURRENT_TIMESTAMP - ('1 DAY'::INTERVAL * #{SiteSetting.suppress_digest_email_after_days})")
+                  .activated
+                  .where(staged: false)
+                  .joins(:user_option, :user_stat)
+                  .where("user_options.email_digests")
+                  .where("user_stats.bounce_score < #{SiteSetting.bounce_score_threshold}")
+                  .where("COALESCE(last_emailed_at, '2010-01-01') <= CURRENT_TIMESTAMP - ('1 MINUTE'::INTERVAL * user_options.digest_after_minutes)")
+                  .where("COALESCE(last_seen_at, '2010-01-01') <= CURRENT_TIMESTAMP - ('1 MINUTE'::INTERVAL * user_options.digest_after_minutes)")
+                  .where("COALESCE(last_seen_at, '2010-01-01') >= CURRENT_TIMESTAMP - ('1 DAY'::INTERVAL * #{SiteSetting.suppress_digest_email_after_days})")
 
       # If the site requires approval, make sure the user is approved
-      if SiteSetting.must_approve_users?
-        query = query.where("approved OR moderator OR admin")
-      end
+      query = query.where("approved OR moderator OR admin") if SiteSetting.must_approve_users?
 
       query.pluck(:id)
     end

@@ -1,8 +1,56 @@
-require 'spec_helper'
+require 'rails_helper'
 require_dependency 'post_destroyer'
 
 describe Post do
   before { Oneboxer.stubs :onebox }
+
+  describe '#hidden_reasons' do
+    context "verify enum sequence" do
+      before do
+        @hidden_reasons = Post.hidden_reasons
+      end
+
+      it "'flag_threshold_reached' should be at 1st position" do
+        expect(@hidden_reasons[:flag_threshold_reached]).to eq(1)
+      end
+
+      it "'flagged_by_tl3_user' should be at 4th position" do
+        expect(@hidden_reasons[:flagged_by_tl3_user]).to eq(4)
+      end
+    end
+  end
+
+  describe '#types' do
+    context "verify enum sequence" do
+      before do
+        @types = Post.types
+      end
+
+      it "'regular' should be at 1st position" do
+        expect(@types[:regular]).to eq(1)
+      end
+
+      it "'whisper' should be at 4th position" do
+        expect(@types[:whisper]).to eq(4)
+      end
+    end
+  end
+
+  describe '#cook_methods' do
+    context "verify enum sequence" do
+      before do
+        @cook_methods = Post.cook_methods
+      end
+
+      it "'regular' should be at 1st position" do
+        expect(@cook_methods[:regular]).to eq(1)
+      end
+
+      it "'email' should be at 3rd position" do
+        expect(@cook_methods[:email]).to eq(3)
+      end
+    end
+  end
 
   # Help us build a post with a raw body
   def post_with_body(body, user=nil)
@@ -89,17 +137,28 @@ describe Post do
   end
 
   describe 'flagging helpers' do
-    it 'isFlagged is accurate' do
-      post = Fabricate(:post)
-      user = Fabricate(:coding_horror)
-      PostAction.act(user, post, PostActionType.types[:off_topic])
+    let(:post) { Fabricate(:post) }
+    let(:user) { Fabricate(:coding_horror) }
+    let(:admin) { Fabricate(:admin) }
 
+    it 'isFlagged is accurate' do
+      PostAction.act(user, post, PostActionType.types[:off_topic])
       post.reload
       expect(post.is_flagged?).to eq(true)
 
       PostAction.remove_act(user, post, PostActionType.types[:off_topic])
       post.reload
       expect(post.is_flagged?).to eq(false)
+    end
+
+    it 'has_active_flag is accurate' do
+      PostAction.act(user, post, PostActionType.types[:spam])
+      post.reload
+      expect(post.has_active_flag?).to eq(true)
+
+      PostAction.defer_flags!(post, admin)
+      post.reload
+      expect(post.has_active_flag?).to eq(false)
     end
   end
 
@@ -310,6 +369,7 @@ describe Post do
     end
 
     it "finds links from HTML" do
+
       expect(post_two_links.link_count).to eq(2)
     end
 
@@ -378,6 +438,11 @@ describe Post do
         expect(post.raw_mentions).to eq(['jake', 'finn', 'jake_old'])
       end
 
+      it "handles hyphen in groupname" do
+        post = Fabricate.build(:post, post_args.merge(raw: "@org-board"))
+        expect(post.raw_mentions).to eq(['org-board'])
+      end
+
     end
 
     context "max mentions" do
@@ -428,7 +493,7 @@ describe Post do
       expect(Fabricate.build(:post, post_args)).to be_valid
     end
 
-    it 'treate blank posts as invalid' do
+    it 'create blank posts as invalid' do
       expect(Fabricate.build(:post, raw: "")).not_to be_valid
     end
   end
@@ -481,7 +546,7 @@ describe Post do
 
     describe 'ninja editing & edit windows' do
 
-      before { SiteSetting.stubs(:ninja_edit_window).returns(1.minute.to_i) }
+      before { SiteSetting.stubs(:editing_grace_period).returns(1.minute.to_i) }
 
       it 'works' do
         revised_at = post.updated_at + 2.minutes
@@ -548,7 +613,7 @@ describe Post do
       context 'second poster posts again quickly' do
 
         it 'is a ninja edit, because the second poster posted again quickly' do
-          SiteSetting.expects(:ninja_edit_window).returns(1.minute.to_i)
+          SiteSetting.expects(:editing_grace_period).returns(1.minute.to_i)
           post.revise(changed_by, { raw: 'yet another updated body' }, revised_at: post.updated_at + 10.seconds)
           post.reload
 
@@ -563,6 +628,21 @@ describe Post do
 
   end
 
+  describe 'before save' do
+    let(:cooked) { "<p><div class=\"lightbox-wrapper\"><a data-download-href=\"//localhost:3000/uploads/default/34784374092783e2fef84b8bc96d9b54c11ceea0\" href=\"//localhost:3000/uploads/default/original/1X/34784374092783e2fef84b8bc96d9b54c11ceea0.gif\" class=\"lightbox\" title=\"Sword reworks.gif\"><img src=\"//localhost:3000/uploads/default/optimized/1X/34784374092783e2fef84b8bc96d9b54c11ceea0_1_690x276.gif\" width=\"690\" height=\"276\"><div class=\"meta\">\n<span class=\"filename\">Sword reworks.gif</span><span class=\"informations\">1000x400 1000 KB</span><span class=\"expand\"></span>\n</div></a></div></p>" }
+
+    let(:post) do
+      Fabricate(:post,
+        raw: "<img src=\"/uploads/default/original/1X/34784374092783e2fef84b8bc96d9b54c11ceea0.gif\" width=\"690\" height=\"276\">",
+        cooked: cooked
+      )
+    end
+
+    it 'should not cook the post if raw has not been changed' do
+      post.save!
+      expect(post.cooked).to eq(cooked)
+    end
+  end
 
   describe 'after save' do
 
@@ -732,7 +812,7 @@ describe Post do
     it "should add nofollow to links in the post for trust levels below 3" do
       post.user.trust_level = 2
       post.save
-      expect(post.cooked).to match(/nofollow/)
+      expect(post.cooked).to match(/nofollow noopener/)
     end
 
     it "when tl3_links_no_follow is false, should not add nofollow for trust level 3 and higher" do
@@ -746,7 +826,7 @@ describe Post do
       SiteSetting.stubs(:tl3_links_no_follow).returns(true)
       post.user.trust_level = 3
       post.save
-      expect(post.cooked).to match(/nofollow/)
+      expect(post.cooked).to match(/nofollow noopener/)
     end
   end
 
@@ -806,6 +886,27 @@ describe Post do
       expect(post.baked_at).not_to eq(first_baked)
       expect(post.cooked).to eq(first_cooked)
       expect(result).to eq(true)
+    end
+  end
+
+  describe "#set_owner" do
+    let(:post) { Fabricate(:post) }
+    let(:coding_horror) { Fabricate(:coding_horror) }
+
+    it "will change owner of a post correctly" do
+      post.set_owner(coding_horror, Discourse.system_user)
+      post.reload
+
+      expect(post.user).to eq(coding_horror)
+      expect(post.revisions.size).to eq(1)
+    end
+
+    it "skips creating new post revision if skip_revision is true" do
+      post.set_owner(coding_horror, Discourse.system_user, true)
+      post.reload
+
+      expect(post.user).to eq(coding_horror)
+      expect(post.revisions.size).to eq(0)
     end
   end
 

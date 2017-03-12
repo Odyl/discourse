@@ -1,4 +1,4 @@
-require "spec_helper"
+require "rails_helper"
 
 require "auth/authenticator"
 require_dependency "auth/result"
@@ -6,14 +6,14 @@ require_dependency "auth/result"
 describe "users/omniauth_callbacks/complete.html.erb" do
 
   let :rendered_data do
-    returned = JSON.parse(rendered.match(/window.opener.Discourse.authenticationComplete\((.*)\)/)[1])
+    JSON.parse(rendered.match(/var authResult = (.*);/)[1])
   end
 
   it "renders auth info" do
     result = Auth::Result.new
     result.user = User.new
 
-    assign(:data, result)
+    assign(:auth_result, result)
 
     render
 
@@ -28,7 +28,7 @@ describe "users/omniauth_callbacks/complete.html.erb" do
     result.email = "xxx@xxx.com"
     result.authenticator_name = "CAS"
 
-    assign(:data, result)
+    assign(:auth_result, result)
 
     render
 

@@ -15,13 +15,23 @@ module ApplicationHelper
   include ConfigurableUrls
   include GlobalPath
 
-  def ga_universal_json
-    cookie_domain = SiteSetting.ga_universal_domain_name.gsub(/^http(s)?:\/\//, '')
-    result = {cookieDomain: cookie_domain}
+  def google_universal_analytics_json(ua_domain_name=nil)
+    result = {}
+    if ua_domain_name
+      result[:cookieDomain] = ua_domain_name.gsub(/^http(s)?:\/\//, '')
+    end
     if current_user.present?
       result[:userId] = current_user.id
     end
     result.to_json.html_safe
+  end
+
+  def ga_universal_json
+    google_universal_analytics_json(SiteSetting.ga_universal_domain_name)
+  end
+
+  def google_tag_manager_json
+    google_universal_analytics_json
   end
 
   def shared_session_key
@@ -36,10 +46,12 @@ module ApplicationHelper
   end
 
   def script(*args)
-    if SiteSetting.enable_cdn_js_debugging && GlobalSetting.cdn_url
-      tags = javascript_include_tag(*args, "crossorigin" => "anonymous")
-      tags.gsub!("/assets/", "/cdn_asset/#{Discourse.current_hostname.gsub(".","_")}/")
-      tags.gsub!(".js\"", ".js?v=1&origin=#{CGI.escape request.base_url}\"")
+    if  GlobalSetting.cdn_url &&
+        GlobalSetting.cdn_url.start_with?("https") &&
+        ENV["COMPRESS_BROTLI"] == "1" &&
+        request.env["HTTP_ACCEPT_ENCODING"] =~ /br/
+      tags = javascript_include_tag(*args)
+      tags.gsub!("#{GlobalSetting.cdn_url}/assets/", "#{GlobalSetting.cdn_url}/brotli_asset/")
       tags.html_safe
     else
       javascript_include_tag(*args)
@@ -56,11 +68,17 @@ module ApplicationHelper
   end
 
   def html_classes
-    "#{mobile_view? ? 'mobile-view' : 'desktop-view'} #{mobile_device? ? 'mobile-device' : 'not-mobile-device'} #{rtl_class}"
+    "#{mobile_view? ? 'mobile-view' : 'desktop-view'} #{mobile_device? ? 'mobile-device' : 'not-mobile-device'} #{rtl_class} #{current_user ? '' : 'anon'}"
+  end
+
+  def body_classes
+    if @category && @category.url.present?
+      "category-#{@category.url.sub(/^\/c\//, '').gsub(/\//, '-')}"
+    end
   end
 
   def rtl_class
-    RTL.new(current_user).css_class
+    rtl? ? 'rtl' : ''
   end
 
   def escape_unicode(javascript)
@@ -74,6 +92,10 @@ module ApplicationHelper
     end
   end
 
+  def format_topic_title(title)
+    PrettyText.unescape_emoji strip_tags(title)
+  end
+
   def with_format(format, &block)
     old_formats = formats
     self.formats = [format]
@@ -84,6 +106,14 @@ module ApplicationHelper
 
   def age_words(secs)
     AgeWords.age_words(secs)
+  end
+
+  def short_date(dt)
+    if dt.year == Time.now.year
+      I18n.l(dt, format: :short_no_year)
+    else
+      I18n.l(dt, format: :date_only)
+    end
   end
 
   def guardian
@@ -107,7 +137,7 @@ module ApplicationHelper
   end
 
   def rtl?
-    ["ar", "fa_IR", "he"].include?(user_locale)
+    ["ar", "ur", "fa_IR", "he"].include? I18n.locale.to_s
   end
 
   def user_locale
@@ -118,44 +148,79 @@ module ApplicationHelper
 
   # Creates open graph and twitter card meta data
   def crawlable_meta_data(opts=nil)
-
     opts ||= {}
-    opts[:image] ||= "#{Discourse.base_url}#{SiteSetting.logo_small_url}"
-    opts[:url] ||= "#{Discourse.base_url}#{request.fullpath}"
+    opts[:url] ||= "#{Discourse.base_url_no_prefix}#{request.fullpath}"
 
-    # Use the correct scheme for open graph
-    if opts[:image].present? && opts[:image].start_with?("//")
-      uri = URI(Discourse.base_url)
-      opts[:image] = "#{uri.scheme}:#{opts[:image]}"
+    if opts[:image].blank? && (SiteSetting.default_opengraph_image_url.present? || SiteSetting.twitter_summary_large_image_url.present?)
+      opts[:twitter_summary_large_image] = SiteSetting.twitter_summary_large_image_url if SiteSetting.twitter_summary_large_image_url.present?
+      opts[:image] = SiteSetting.default_opengraph_image_url.present? ? SiteSetting.default_opengraph_image_url : SiteSetting.twitter_summary_large_image_url
+    elsif opts[:image].blank? && SiteSetting.apple_touch_icon_url.present?
+      opts[:image] = SiteSetting.apple_touch_icon_url
     end
 
-    # Add opengraph tags
-    result =  tag(:meta, property: 'og:site_name', content: SiteSetting.title) << "\n"
-
-    result << tag(:meta, name: 'twitter:card', content: "summary")
-
-    # I removed image related opengraph tags from here for now due to
-    # https://meta.discourse.org/t/x/22744/18
-    [:url, :title, :description].each do |property|
-      if opts[property].present?
-        escape = (property != :image)
-        result << tag(:meta, {property: "og:#{property}", content: opts[property]}, nil, escape) << "\n"
-        result << tag(:meta, {name: "twitter:#{property}", content: opts[property]}, nil, escape) << "\n"
+    # Use the correct scheme for open graph image
+    if opts[:image].present?
+      if opts[:image].start_with?("//")
+        uri = URI(Discourse.base_url)
+        opts[:image] = "#{uri.scheme}:#{opts[:image]}"
+      elsif opts[:image].start_with?("/uploads/")
+        opts[:image] = "#{Discourse.base_url}#{opts[:image]}"
+      elsif GlobalSetting.relative_url_root && opts[:image].start_with?(GlobalSetting.relative_url_root)
+        opts[:image] = "#{Discourse.base_url_no_prefix}#{opts[:image]}"
       end
     end
 
-    result
+    # Add opengraph & twitter tags
+    result = []
+    result << tag(:meta, property: 'og:site_name', content: SiteSetting.title)
+
+    if opts[:twitter_summary_large_image].present?
+      result << tag(:meta, name: 'twitter:card', content: "summary_large_image")
+      result << tag(:meta, name: "twitter:image", content: opts[:twitter_summary_large_image])
+    elsif opts[:image].present?
+      result << tag(:meta, name: 'twitter:card', content: "summary")
+      result << tag(:meta, name: "twitter:image", content: opts[:image])
+    else
+      result << tag(:meta, name: 'twitter:card', content: "summary")
+    end
+    result << tag(:meta, property: "og:image", content: opts[:image]) if opts[:image].present?
+
+    [:url, :title, :description].each do |property|
+      if opts[property].present?
+        escape = (property != :image)
+        content = (property == :url ? opts[property] : gsub_emoji_to_unicode(opts[property]))
+        result << tag(:meta, { property: "og:#{property}", content: content }, nil, escape)
+        result << tag(:meta, { name: "twitter:#{property}", content: content }, nil, escape)
+      end
+    end
+
+    if opts[:read_time] && opts[:read_time] > 0 && opts[:like_count] && opts[:like_count] > 0
+      result << tag(:meta, name: 'twitter:label1', value: I18n.t("reading_time"))
+      result << tag(:meta, name: 'twitter:data1', value: "#{opts[:read_time]} mins 🕑")
+      result << tag(:meta, name: 'twitter:label2', value: I18n.t("likes"))
+      result << tag(:meta, name: 'twitter:data2', value: "#{opts[:like_count]} ❤")
+    end
+
+    result.join("\n")
   end
 
-  # Look up site content for a key. If the key is blank, you can supply a block and that
-  # will be rendered instead.
-  def markdown_content(key, replacements=nil)
-    result = PrettyText.cook(SiteText.text_for(key, replacements || {})).html_safe
-    if result.blank? && block_given?
-      yield
-      nil
-    else
-      result
+  def render_sitelinks_search_tag
+    json = {
+      '@context' => 'http://schema.org',
+      '@type' => 'WebSite',
+      url: Discourse.base_url,
+      potentialAction: {
+        '@type' => 'SearchAction',
+        target: "#{Discourse.base_url}/search?q={search_term_string}",
+        'query-input' => 'required name=search_term_string',
+      }
+    }
+    content_tag(:script, MultiJson.dump(json).html_safe, type: 'application/ld+json'.freeze)
+  end
+
+  def gsub_emoji_to_unicode(str)
+    if str
+      str.gsub(/:([\w\-+]*):/) { |name| Emoji.lookup_unicode($1) || name }
     end
   end
 
@@ -171,12 +236,47 @@ module ApplicationHelper
     MobileDetection.resolve_mobile_view!(request.user_agent,params,session)
   end
 
+  def crawler_layout?
+    controller.try(:use_crawler_layout?)
+  end
+
+  def include_crawler_content?
+    crawler_layout? || !mobile_view?
+  end
+
   def mobile_device?
     MobileDetection.mobile_device?(request.user_agent)
   end
 
+  NO_CUSTOM = "no_custom".freeze
+  NO_PLUGINS = "no_plugins".freeze
+  ONLY_OFFICIAL = "only_official".freeze
+  SAFE_MODE = "safe_mode".freeze
+
   def customization_disabled?
-    session[:disable_customization]
+    safe_mode = params[SAFE_MODE]
+    session[:disable_customization] || (safe_mode && safe_mode.include?(NO_CUSTOM))
+  end
+
+  def allow_plugins?
+    safe_mode = params[SAFE_MODE]
+    !(safe_mode && safe_mode.include?(NO_PLUGINS))
+  end
+
+  def allow_third_party_plugins?
+    safe_mode = params[SAFE_MODE]
+    !(safe_mode && (safe_mode.include?(NO_PLUGINS) || safe_mode.include?(ONLY_OFFICIAL)))
+  end
+
+  def normalized_safe_mode
+    mode_string = params["safe_mode"]
+    safe_mode = nil
+    (safe_mode ||= []) << NO_CUSTOM if mode_string.include?(NO_CUSTOM)
+    (safe_mode ||= []) << NO_PLUGINS if mode_string.include?(NO_PLUGINS)
+    (safe_mode ||= []) << ONLY_OFFICIAL if mode_string.include?(ONLY_OFFICIAL)
+    if safe_mode
+      safe_mode.join(",").html_safe
+    end
   end
 
   def loading_admin?
@@ -187,4 +287,33 @@ module ApplicationHelper
     CategoryBadge.html_for(category, opts).html_safe
   end
 
+  def self.all_connectors
+    @all_connectors = Dir.glob("plugins/*/app/views/connectors/**/*.html.erb")
+  end
+
+  def server_plugin_outlet(name)
+
+    # Don't evaluate plugins in test
+    return "" if Rails.env.test?
+
+    matcher = Regexp.new("/connectors/#{name}/.*\.html\.erb$")
+    erbs = ApplicationHelper.all_connectors.select {|c| c =~ matcher }
+    return "" if erbs.blank?
+
+    result = ""
+    erbs.each {|erb| result << render(file: erb) }
+    result.html_safe
+  end
+
+  def topic_featured_link_domain(link)
+    begin
+      uri = URI.encode(link)
+      uri = URI.parse(uri)
+      uri = URI.parse("http://#{uri}") if uri.scheme.nil?
+      host = uri.host.downcase
+      host.start_with?('www.') ? host[4..-1] : host
+    rescue
+      ''
+    end
+  end
 end

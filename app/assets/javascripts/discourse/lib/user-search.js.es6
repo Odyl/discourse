@@ -6,7 +6,7 @@ var cache = {},
     currentTerm,
     oldSearch;
 
-function performSearch(term, topicId, includeGroups, allowedUsers, resultsFn) {
+function performSearch(term, topicId, includeGroups, includeMentionableGroups, allowedUsers, group, resultsFn) {
   var cached = cache[term];
   if (cached) {
     resultsFn(cached);
@@ -18,6 +18,8 @@ function performSearch(term, topicId, includeGroups, allowedUsers, resultsFn) {
     data: { term: term,
             topic_id: topicId,
             include_groups: includeGroups,
+            include_mentionable_groups: includeMentionableGroups,
+            group: group,
             topic_allowed_users: allowedUsers }
   });
 
@@ -58,7 +60,7 @@ function organizeResults(r, options) {
 
   if (r.groups) {
     r.groups.every(function(g) {
-      if (results.length > limit) return false;
+      if (results.length > limit && options.term !== g.name) return false;
       if (exclude.indexOf(g.name) === -1) {
         groups.push(g);
         results.push(g);
@@ -76,8 +78,10 @@ function organizeResults(r, options) {
 export default function userSearch(options) {
   var term = options.term || "",
       includeGroups = options.includeGroups,
+      includeMentionableGroups = options.includeMentionableGroups,
       allowedUsers = options.allowedUsers,
-      topicId = options.topicId;
+      topicId = options.topicId,
+      group = options.group;
 
 
   if (oldSearch) {
@@ -89,7 +93,7 @@ export default function userSearch(options) {
 
   return new Ember.RSVP.Promise(function(resolve) {
     // TODO site setting for allowed regex in username
-    if (term.match(/[^a-zA-Z0-9_\.]/)) {
+    if (term.match(/[^\w\.\-]/)) {
       resolve([]);
       return;
     }
@@ -103,10 +107,16 @@ export default function userSearch(options) {
       resolve(CANCELLED_STATUS);
     }, 5000);
 
-    debouncedSearch(term, topicId, includeGroups, allowedUsers, function(r) {
-      clearTimeout(clearPromise);
-      resolve(organizeResults(r, options));
-    });
+    debouncedSearch(term,
+        topicId,
+        includeGroups,
+        includeMentionableGroups,
+        allowedUsers,
+        group,
+        function(r) {
+          clearTimeout(clearPromise);
+          resolve(organizeResults(r, options));
+        });
 
   });
 }

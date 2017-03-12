@@ -10,12 +10,16 @@ class DiscourseSingleSignOn < SingleSignOn
     SiteSetting.sso_secret
   end
 
-  def self.generate_url(return_path="/")
+  def self.generate_sso(return_path="/")
     sso = new
     sso.nonce = SecureRandom.hex
     sso.register_nonce(return_path)
     sso.return_sso_url = Discourse.base_url + "/session/sso_login"
-    sso.to_url
+    sso
+  end
+
+  def self.generate_url(return_path="/")
+    generate_sso(return_path).to_url
   end
 
   def register_nonce(return_path)
@@ -45,12 +49,15 @@ class DiscourseSingleSignOn < SingleSignOn
   def lookup_or_create_user(ip_address=nil)
     sso_record = SingleSignOnRecord.find_by(external_id: external_id)
 
-    if sso_record && user = sso_record.user
+    if sso_record && (user = sso_record.user)
       sso_record.last_payload = unsigned_payload
     else
       user = match_email_or_create_user(ip_address)
       sso_record = user.single_sign_on_record
     end
+
+    # ensure it's not staged anymore
+    user.staged = false
 
     # if the user isn't new or it's attached to the SSO record we might be overriding username or email
     unless user.new_record?
@@ -68,41 +75,88 @@ class DiscourseSingleSignOn < SingleSignOn
     end
 
     user.ip_address = ip_address
+
     user.admin = admin unless admin.nil?
     user.moderator = moderator unless moderator.nil?
 
+    user.title = title unless title.nil?
+
     # optionally save the user and sso_record if they have changed
+    user.user_avatar.save! if user.user_avatar
     user.save!
+
+    if bio && (user.user_profile.bio_raw.blank? || SiteSetting.sso_overrides_bio)
+      user.user_profile.bio_raw = bio
+      user.user_profile.save!
+    end
+
+    unless admin.nil? && moderator.nil?
+      Group.refresh_automatic_groups!(:admins, :moderators, :staff)
+    end
+
     sso_record.save!
+
+    if sso_record.user
+      apply_group_rules(sso_record.user)
+    end
 
     sso_record && sso_record.user
   end
 
   private
 
+  def apply_group_rules(user)
+    if add_groups
+      split = add_groups.split(",")
+      if split.length > 0
+        Group.where('name in (?) AND NOT automatic', split).pluck(:id).each do |id|
+          unless GroupUser.where(group_id: id, user_id: user.id).exists?
+            GroupUser.create(group_id: id, user_id: user.id)
+          end
+        end
+      end
+    end
+
+    if remove_groups
+      split = remove_groups.split(",")
+      if split.length > 0
+        GroupUser
+            .where(user_id: user.id)
+            .where('group_id IN (SELECT id FROM groups WHERE name in (?))',split)
+            .destroy_all
+      end
+    end
+  end
+
   def match_email_or_create_user(ip_address)
-    user = User.find_by_email(email)
+    unless user = User.find_by_email(email)
+      try_name = name.presence
+      try_username = username.presence
 
-    try_name = name.blank? ? nil : name
-    try_username = username.blank? ? nil : username
+      user_params = {
+        email: email,
+        name: try_name || User.suggest_name(try_username || email),
+        username: UserNameSuggester.suggest(try_username || try_name || email),
+        ip_address: ip_address
+      }
 
-    user_params = {
-      email: email,
-      name:  try_name || User.suggest_name(try_username || email),
-      username: UserNameSuggester.suggest(try_username || try_name || email),
-      ip_address: ip_address
-    }
+      user = User.create!(user_params)
+    end
 
-    if user || user = User.create!(user_params)
+    if user
       if sso_record = user.single_sign_on_record
         sso_record.last_payload = unsigned_payload
         sso_record.external_id = external_id
       else
-        user.create_single_sign_on_record(last_payload: unsigned_payload,
-                                          external_id: external_id,
-                                          external_username: username,
-                                          external_email: email,
-                                          external_name: name)
+        Jobs.enqueue(:download_avatar_from_url, url: avatar_url, user_id: user.id, override_gravatar: SiteSetting.sso_overrides_avatar) if avatar_url.present?
+        user.create_single_sign_on_record(
+          last_payload: unsigned_payload,
+          external_id: external_id,
+          external_username: username,
+          external_email: email,
+          external_name: name,
+          external_avatar_url: avatar_url
+        )
       end
     end
 
@@ -114,40 +168,21 @@ class DiscourseSingleSignOn < SingleSignOn
       user.email = email
     end
 
-    if SiteSetting.sso_overrides_username &&
-        user.username != username
+    if SiteSetting.sso_overrides_username && user.username != username && username.present?
       user.username = UserNameSuggester.suggest(username || name || email, user.username)
     end
 
-    if SiteSetting.sso_overrides_name && user.name != name
+    if SiteSetting.sso_overrides_name && user.name != name && name.present?
       user.name = name || User.suggest_name(username.blank? ? email : username)
     end
 
-    if SiteSetting.sso_overrides_avatar && avatar_url.present? && (
-      avatar_force_update ||
-      sso_record.external_avatar_url != avatar_url)
+    avatar_missing = user.uploaded_avatar_id.nil? || !Upload.exists?(user.uploaded_avatar_id)
 
-      begin
-        tempfile = FileHelper.download(avatar_url, SiteSetting.max_image_size_kb.kilobytes, "sso-avatar", true)
+    if (avatar_missing || avatar_force_update || SiteSetting.sso_overrides_avatar) && avatar_url.present?
+      avatar_changed = sso_record.external_avatar_url != avatar_url
 
-        ext = FastImage.type(tempfile).to_s
-        tempfile.rewind
-
-        upload = Upload.create_for(user.id, tempfile, "external-avatar." + ext, tempfile.size, { origin: avatar_url })
-        user.uploaded_avatar_id = upload.id
-
-        unless user.user_avatar
-          user.build_user_avatar
-        end
-
-        if !user.user_avatar.contains_upload?(upload.id)
-          user.user_avatar.custom_upload_id = upload.id
-        end
-      rescue => e
-        # skip saving, we are not connected to the net
-        Rails.logger.warn "#{e}: Failed to download external avatar: #{avatar_url}, user id #{ user.id }"
-      ensure
-        tempfile.close! if tempfile && tempfile.respond_to?(:close!)
+      if avatar_force_update || avatar_changed || avatar_missing
+        Jobs.enqueue(:download_avatar_from_url, url: avatar_url, user_id: user.id, override_gravatar: SiteSetting.sso_overrides_avatar)
       end
     end
 

@@ -1,7 +1,11 @@
-import ShowFooter from "discourse/mixins/show-footer";
 import ViewingActionType from "discourse/mixins/viewing-action-type";
 
-export default Discourse.Route.extend(ShowFooter, ViewingActionType, {
+export default Discourse.Route.extend(ViewingActionType, {
+
+  renderTemplate() {
+    this.render('user/notifications');
+  },
+
   actions: {
     didTransition() {
       this.controllerFor("user-notifications")._showFooter();
@@ -10,13 +14,17 @@ export default Discourse.Route.extend(ShowFooter, ViewingActionType, {
   },
 
   model() {
-    var user = this.modelFor('user');
-    return this.store.find('notification', {username: user.get('username')});
+    const username = this.modelFor("user").get("username");
+
+    if (this.get("currentUser.username") ===  username || this.get("currentUser.admin")) {
+      return this.store.find("notification", { username } );
+    }
   },
 
+
   setupController(controller, model) {
-    controller.set('model', model);
-    controller.set('user', this.modelFor('user'));
+    controller.set("model", model);
+    controller.set("user", this.modelFor("user"));
     this.viewingActionType(-1);
   }
 });

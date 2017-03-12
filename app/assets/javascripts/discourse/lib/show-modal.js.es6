@@ -1,11 +1,5 @@
-export default (name, opts) => {
+export default function(name, opts) {
   opts = opts || {};
-
-  if (opts.__type) {
-    Ember.warn("showModal now takes `opts` as a second param instead of a model");
-    opts = {model: opts};
-  }
-
   const container = Discourse.__container__;
 
   // We use the container here because modals are like singletons
@@ -15,23 +9,28 @@ export default (name, opts) => {
 
   modalController.set('modalClass', null);
 
-  const viewClass = container.lookupFactory('view:' + name);
-  const controller = container.lookup('controller:' + name);
-  if (viewClass) {
-    route.render(name, { into: 'modal', outlet: 'modalBody' });
-  } else {
-    const templateName = Ember.String.dasherize(name);
+  const controllerName = opts.admin ? `modals/${name}` : name;
 
-    const renderArgs = { into: 'modal', outlet: 'modalBody', view: 'modal-body'};
-    if (controller) { renderArgs.controller = name; }
+  const controller = container.lookup('controller:' + controllerName);
+  const templateName = opts.templateName || Ember.String.dasherize(name);
 
-    route.render('modal/' + templateName, renderArgs);
-    if (opts.title) {
-      modalController.set('title', I18n.t(opts.title));
-    }
+  const renderArgs = { into: 'modal', outlet: 'modalBody'};
+  if (controller) { renderArgs.controller = controllerName; }
+
+  if (opts.addModalBodyView) {
+    renderArgs.view = 'modal-body';
+  }
+
+
+  const modalName = `modal/${templateName}`;
+  const fullName = opts.admin ? `admin/templates/${modalName}` : modalName;
+  route.render(fullName, renderArgs);
+  if (opts.title) {
+    modalController.set('title', I18n.t(opts.title));
   }
 
   if (controller) {
+    controller.set('modal', modalController);
     const model = opts.model;
     if (model) { controller.set('model', model); }
     if (controller.onShow) { controller.onShow(); }

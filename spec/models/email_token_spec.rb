@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe EmailToken do
 
@@ -90,16 +90,6 @@ describe EmailToken do
         expect(user.send_welcome_message).to eq true
       end
 
-      context "when using the code a second time" do
-
-        it "doesn't send the welcome message" do
-          SiteSetting.email_token_grace_period_hours = 1
-          EmailToken.confirm(email_token.token)
-          user = EmailToken.confirm(email_token.token)
-          expect(user.send_welcome_message).to eq false
-        end
-      end
-
     end
 
     context 'success' do
@@ -120,17 +110,44 @@ describe EmailToken do
         expect(email_token).to be_confirmed
       end
 
-      it "can be confirmed again" do
-        EmailToken.stubs(:confirm_valid_after).returns(1.hour.ago)
-
-        expect(EmailToken.confirm(email_token.token)).to eq user
-
-        # Unless `confirm_valid_after` has passed
-        EmailToken.stubs(:confirm_valid_after).returns(1.hour.from_now)
+      it "will not confirm again" do
         expect(EmailToken.confirm(email_token.token)).to be_blank
+      end
+    end
+
+    context 'confirms the token and redeems invite' do
+      before do
+        SiteSetting.must_approve_users = true
+      end
+
+      let(:invite) { Fabricate(:invite, email: 'test@example.com', user_id: nil) }
+      let(:invited_user) { Fabricate(:user, active: false, email: invite.email) }
+      let(:user_email_token) { invited_user.email_tokens.first }
+      let!(:confirmed_invited_user) { EmailToken.confirm(user_email_token.token) }
+
+      it "returns the correct user" do
+        expect(confirmed_invited_user).to eq invited_user
+      end
+
+      it 'marks the user as active' do
+        confirmed_invited_user.reload
+        expect(confirmed_invited_user).to be_active
+      end
+
+      it 'marks the token as confirmed' do
+        user_email_token.reload
+        expect(user_email_token).to be_confirmed
+      end
+
+      it 'redeems invite' do
+        invite.reload
+        expect(invite).to be_redeemed
+      end
+
+      it 'marks the user as approved' do
+        expect(confirmed_invited_user).to be_approved
       end
     end
   end
 
 end
-

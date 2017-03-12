@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe StaffActionLogger do
 
@@ -63,6 +63,13 @@ describe StaffActionLogger do
     it 'creates a new UserHistory record' do
       expect { log_post_deletion }.to change { UserHistory.count }.by(1)
     end
+
+    it 'does not explode if post does not have a user' do
+      expect {
+        deleted_post.update_columns(user_id: nil)
+        log_post_deletion
+      }.to change { UserHistory.count }.by(1)
+    end
   end
 
   describe 'log_topic_deletion' do
@@ -113,9 +120,8 @@ describe StaffActionLogger do
 
   describe "log_site_setting_change" do
     it "raises an error when params are invalid" do
-      SiteSetting.stubs(:respond_to?).with('abc').returns(false)
       expect { logger.log_site_setting_change(nil, '1', '2') }.to raise_error(Discourse::InvalidParameters)
-      expect { logger.log_site_setting_change('abc', '1', '2') }.to raise_error(Discourse::InvalidParameters)
+      expect { logger.log_site_setting_change('i_am_a_site_setting_that_will_never_exist', '1', '2') }.to raise_error(Discourse::InvalidParameters)
     end
 
     it "creates a new UserHistory record" do
@@ -163,6 +169,16 @@ describe StaffActionLogger do
       json = ::JSON.parse(log_record.previous_value)
       expect(json['stylesheet']).to eq(site_customization.stylesheet)
       expect(json['header']).to eq(site_customization.header)
+    end
+  end
+
+  describe "log_site_text_change" do
+    it "raises an error when params are invalid" do
+      expect { logger.log_site_text_change(nil, 'new text', 'old text') }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates a new UserHistory record" do
+      expect { logger.log_site_text_change('created', 'new text', 'old text') }.to change { UserHistory.count }.by(1)
     end
   end
 
@@ -262,6 +278,152 @@ describe StaffActionLogger do
       expect(logged.action).to eq(UserHistory.actions[:custom_staff])
       expect(logged.custom_type).to eq('clicked_something')
       expect(logged.topic_id).to be === 1234
+    end
+  end
+
+  describe 'log_category_settings_change' do
+    let(:category) { Fabricate(:category, name: 'haha') }
+    let(:category_group) { Fabricate(:category_group, category: category, permission_type: 1) }
+
+    it "raises an error when category is missing" do
+      expect { logger.log_category_settings_change(nil, nil) }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates new UserHistory records" do
+      attributes = {
+        name: 'new_name',
+        permissions: { category_group.group_name => 2 }
+      }
+
+      category.update!(attributes)
+
+      logger.log_category_settings_change(category, attributes,
+        { category_group.group_name => category_group.permission_type }
+      )
+
+      expect(UserHistory.count).to eq(2)
+
+      permission_user_history = UserHistory.find_by_subject('permissions')
+      expect(permission_user_history.category_id).to eq(category.id)
+      expect(permission_user_history.previous_value).to eq({ category_group.group_name => 1 }.to_json)
+      expect(permission_user_history.new_value).to eq({ category_group.group_name => 2 }.to_json)
+      expect(permission_user_history.action).to eq(UserHistory.actions[:change_category_settings])
+      expect(permission_user_history.context).to eq(category.url)
+
+      name_user_history = UserHistory.find_by_subject('name')
+      expect(name_user_history.category).to eq(category)
+      expect(name_user_history.previous_value).to eq('haha')
+      expect(name_user_history.new_value).to eq('new_name')
+    end
+
+    it "does not log permissions changes for category visible to everyone" do
+      attributes = { name: 'new_name' }
+      old_permission = category.permissions_params
+      category.update!(attributes)
+
+      logger.log_category_settings_change(category, attributes.merge({ permissions: { "everyone" => 1 } }), old_permission)
+
+      expect(UserHistory.count).to eq(1)
+      expect(UserHistory.find_by_subject('name').category).to eq(category)
+    end
+  end
+
+  describe 'log_category_deletion' do
+    let(:parent_category) { Fabricate(:category) }
+    let(:category) { Fabricate(:category, parent_category: parent_category) }
+
+    it "raises an error when category is missing" do
+      expect { logger.log_category_deletion(nil) }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates a new UserHistory record" do
+      logger.log_category_deletion(category)
+
+      expect(UserHistory.count).to eq(1)
+      user_history = UserHistory.last
+
+      expect(user_history.subject).to eq(nil)
+      expect(user_history.category).to eq(category)
+      expect(user_history.details).to include("parent_category: #{parent_category.name}")
+      expect(user_history.context).to eq(category.url)
+      expect(user_history.action).to eq(UserHistory.actions[:delete_category])
+    end
+  end
+
+  describe 'log_category_creation' do
+    let(:category) { Fabricate(:category) }
+
+    it "raises an error when category is missing" do
+      expect { logger.log_category_deletion(nil) }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates a new UserHistory record" do
+      logger.log_category_creation(category)
+
+      expect(UserHistory.count).to eq(1)
+      user_history = UserHistory.last
+
+      expect(user_history.category).to eq(category)
+      expect(user_history.context).to eq(category.url)
+      expect(user_history.action).to eq(UserHistory.actions[:create_category])
+    end
+  end
+
+  describe 'log_lock_trust_level' do
+    let(:user) { Fabricate(:user) }
+
+    it "raises an error when argument is missing" do
+      expect { logger.log_lock_trust_level(nil) }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates a new UserHistory record" do
+      user.trust_level_locked = true
+      expect { logger.log_lock_trust_level(user) }.to change { UserHistory.count }.by(1)
+      user_history = UserHistory.last
+      expect(user_history.action).to eq(UserHistory.actions[:lock_trust_level])
+
+      user.trust_level_locked = false
+      expect { logger.log_lock_trust_level(user) }.to change { UserHistory.count }.by(1)
+      user_history = UserHistory.last
+      expect(user_history.action).to eq(UserHistory.actions[:unlock_trust_level])
+    end
+  end
+
+  describe 'log_user_activate' do
+    let(:user) { Fabricate(:user) }
+
+    it "raises an error when argument is missing" do
+      expect { logger.log_user_activate(nil, nil) }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates a new UserHistory record" do
+      reason = "Staff activated from admin"
+      expect {
+        logger.log_user_activate(user, reason)
+      }.to change { UserHistory.count }.by(1)
+      user_history = UserHistory.last
+      expect(user_history.action).to eq(UserHistory.actions[:activate_user])
+      expect(user_history.details).to eq(reason)
+    end
+  end
+
+  describe '#log_readonly_mode' do
+    it "creates a new record" do
+      expect { logger.log_change_readonly_mode(true) }.to change { UserHistory.count }.by(1)
+
+      user_history = UserHistory.last
+
+      expect(user_history.action).to eq(UserHistory.actions[:change_readonly_mode])
+      expect(user_history.new_value).to eq('t')
+      expect(user_history.previous_value).to eq('f')
+
+      expect { logger.log_change_readonly_mode(false) }.to change { UserHistory.count }.by(1)
+
+      user_history = UserHistory.last
+
+      expect(user_history.action).to eq(UserHistory.actions[:change_readonly_mode])
+      expect(user_history.new_value).to eq('f')
+      expect(user_history.previous_value).to eq('t')
     end
   end
 end

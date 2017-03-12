@@ -1,9 +1,15 @@
+import { displayErrorForUpload, validateUploadedFiles } from 'discourse/lib/utilities';
+
 export default Em.Mixin.create({
   uploading: false,
   uploadProgress: 0,
 
   uploadDone() {
     Em.warn("You should implement `uploadDone`");
+  },
+
+  validateUploadedFilesOptions() {
+    return {};
   },
 
   _initialize: function() {
@@ -16,7 +22,7 @@ export default Em.Mixin.create({
       if (upload && upload.url) {
         this.uploadDone(upload);
       } else {
-        Discourse.Utilities.displayErrorForUpload(upload);
+        displayErrorForUpload(upload);
       }
       reset();
     });
@@ -38,7 +44,8 @@ export default Em.Mixin.create({
     });
 
     $upload.on("fileuploadsubmit", (e, data) => {
-      const isValid = Discourse.Utilities.validateUploadedFiles(data.files, true);
+      const opts = _.merge({ bypassNewUserRestriction: true }, this.validateUploadedFilesOptions());
+      const isValid = validateUploadedFiles(data.files, opts);
       let form = { type: this.get("type") };
       if (this.get("data")) { form = $.extend(form, this.get("data")); }
       data.formData = form;
@@ -52,7 +59,7 @@ export default Em.Mixin.create({
     });
 
     $upload.on("fileuploadfail", (e, data) => {
-      Discourse.Utilities.displayErrorForUpload(data);
+      displayErrorForUpload(data);
       reset();
     });
   }.on("didInsertElement"),

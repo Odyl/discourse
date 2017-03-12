@@ -1,5 +1,20 @@
+import { ajax } from 'discourse/lib/ajax';
+import { url } from 'discourse/lib/computed';
 import RestModel from 'discourse/models/rest';
-import avatarTemplate from 'discourse/lib/avatar-template';
+import UserStream from 'discourse/models/user-stream';
+import UserPostsStream from 'discourse/models/user-posts-stream';
+import Singleton from 'discourse/mixins/singleton';
+import { longDate } from 'discourse/lib/formatter';
+import { default as computed, observes } from 'ember-addons/ember-computed-decorators';
+import Badge from 'discourse/models/badge';
+import UserBadge from 'discourse/models/user-badge';
+import UserActionStat from 'discourse/models/user-action-stat';
+import UserAction from 'discourse/models/user-action';
+import Group from 'discourse/models/group';
+import Topic from 'discourse/models/topic';
+import { emojiUnescape } from 'discourse/lib/text';
+import PreloadStore from 'preload-store';
+import { defaultHomepage } from 'discourse/lib/utilities';
 
 const User = RestModel.extend({
 
@@ -10,106 +25,136 @@ const User = RestModel.extend({
   hasNotPosted: Em.computed.not("hasPosted"),
   canBeDeleted: Em.computed.and("can_be_deleted", "hasNotPosted"),
 
-  /**
-    The user's stream
+  redirected_to_top: {
+    reason: null,
+  },
 
-    @property stream
-    @type {Discourse.UserStream}
-  **/
-  stream: function() {
-    return Discourse.UserStream.create({ user: this });
-  }.property(),
+  @computed()
+  stream() {
+    return UserStream.create({ user: this });
+  },
 
-  /**
-    The user's posts stream
+  @computed()
+  postsStream() {
+    return UserPostsStream.create({ user: this });
+  },
 
-    @property postsStream
-    @type {Discourse.UserPostsStream}
-  **/
-  postsStream: function() {
-    return Discourse.UserPostsStream.create({ user: this });
-  }.property(),
-
-  /**
-    Is this user a member of staff?
-
-    @property staff
-    @type {Boolean}
-  **/
   staff: Em.computed.or('admin', 'moderator'),
 
-  searchContext: function() {
+  destroySession() {
+    return ajax(`/session/${this.get('username')}`, { type: 'DELETE'});
+  },
+
+  @computed("username_lower")
+  searchContext(username) {
     return {
       type: 'user',
-      id: this.get('username_lower'),
+      id: username,
       user: this
     };
-  }.property('username_lower'),
+  },
 
-  /**
-    This user's display name. Returns the name if possible, otherwise returns the
-    username.
-
-    @property displayName
-    @type {String}
-  **/
-  displayName: function() {
-    if (Discourse.SiteSettings.enable_names && !this.blank('name')) {
-      return this.get('name');
+  @computed("username", "name")
+  displayName(username, name) {
+    if (Discourse.SiteSettings.enable_names && !Ember.isEmpty(name)) {
+      return name;
     }
-    return this.get('username');
-  }.property('username', 'name'),
+    return username;
+  },
 
-  /**
-    This user's profile background(in CSS).
+  @computed('profile_background')
+  profileBackground(bgUrl) {
+    if (Em.isEmpty(bgUrl) || !Discourse.SiteSettings.allow_profile_backgrounds) { return "".htmlSafe(); }
+    return ('background-image: url(' + Discourse.getURLWithCDN(bgUrl) + ')').htmlSafe();
+  },
 
-    @property websiteName
-    @type {String}
-  **/
-  profileBackground: function() {
-    var url = this.get('profile_background');
-    if (Em.isEmpty(url) || !Discourse.SiteSettings.allow_profile_backgrounds) { return; }
-    return ('background-image: url(' + Discourse.getURLWithCDN(url) + ')').htmlSafe();
-  }.property('profile_background'),
-
-  /**
-    Path to this user.
-
-    @property path
-    @type {String}
-  **/
-  path: function(){
-    return Discourse.getURL('/users/' + this.get('username_lower'));
+  @computed()
+  path() {
     // no need to observe, requires a hard refresh to update
-  }.property(),
+    return Discourse.getURL(`/users/${this.get('username_lower')}`);
+  },
 
-  /**
-    Path to this user's administration
+  @computed()
+  userApiKeys() {
+    const keys = this.get('user_api_keys');
+    if (keys) {
+      return keys.map((raw)=>{
+        let obj = Em.Object.create(
+          raw
+        );
 
-    @property adminPath
-    @type {String}
-  **/
-  adminPath: Discourse.computed.url('username_lower', "/admin/users/%@"),
+        obj.revoke = () => {
+          this.revokeApiKey(obj);
+        };
 
-  /**
-    This user's username in lowercase.
+        obj.undoRevoke = () => {
+          this.undoRevokeApiKey(obj);
+        };
 
-    @property username_lower
-    @type {String}
-  **/
-  username_lower: function() {
-    return this.get('username').toLowerCase();
-  }.property('username'),
+        return obj;
+      });
+    }
+  },
 
-  /**
-    This user's trust level.
+  revokeApiKey(key) {
+    return ajax("/user-api-key/revoke", {
+      type: 'POST',
+      data: { id: key.get('id') }
+    }).then(()=>{
+      key.set('revoked', true);
+    });
+  },
 
-    @property trustLevel
-    @type {Integer}
-  **/
-  trustLevel: function() {
-    return Discourse.Site.currentProp('trustLevels').findProperty('id', parseInt(this.get('trust_level'), 10));
-  }.property('trust_level'),
+  undoRevokeApiKey(key){
+    return ajax("/user-api-key/undo-revoke", {
+      type: 'POST',
+      data: { id: key.get('id') }
+    }).then(()=>{
+      key.set('revoked', false);
+    });
+  },
+
+  pmPath(topic) {
+    const userId = this.get('id');
+    const username = this.get('username_lower');
+
+    const details = topic && topic.get('details');
+    const allowedUsers = details && details.get('allowed_users');
+    const groups = details && details.get('allowed_groups');
+
+    // directly targetted so go to inbox
+    if (!groups || (allowedUsers && allowedUsers.findBy("id", userId))) {
+      return Discourse.getURL(`/users/${username}/messages`);
+    } else {
+      if (groups && groups[0])
+      {
+        return Discourse.getURL(`/users/${username}/messages/group/${groups[0].name}`);
+      }
+    }
+
+  },
+
+  adminPath: url('id', 'username_lower', "/admin/users/%@1/%@2"),
+
+  @computed()
+  mutedTopicsPath() {
+    return defaultHomepage() === "latest" ? Discourse.getURL('/?state=muted') : Discourse.getURL('/latest?state=muted');
+  },
+
+  @computed()
+  watchingTopicsPath() {
+    return defaultHomepage() === "latest" ? Discourse.getURL('/?state=watching') : Discourse.getURL('/latest?state=watching');
+  },
+
+  @computed("username")
+  username_lower(username) {
+    return username.toLowerCase();
+  },
+
+  @computed("trust_level")
+  trustLevel(trustLevel) {
+    return Discourse.Site.currentProp('trustLevels').findBy('id', parseInt(trustLevel, 10));
+  },
 
   isBasic: Em.computed.equal('trust_level', 0),
   isLeader: Em.computed.equal('trust_level', 3),
@@ -118,192 +163,193 @@ const User = RestModel.extend({
 
   isSuspended: Em.computed.equal('suspended', true),
 
-  suspended: function() {
-    return this.get('suspended_till') && moment(this.get('suspended_till')).isAfter();
-  }.property('suspended_till'),
+  @computed("previous_visit_at")
+  previousVisitAt(previous_visit_at) {
+    return new Date(previous_visit_at);
+  },
 
-  suspendedTillDate: function() {
-    return Discourse.Formatter.longDate(this.get('suspended_till'));
-  }.property('suspended_till'),
+  @computed("suspended_till")
+  suspended(suspendedTill) {
+    return suspendedTill && moment(suspendedTill).isAfter();
+  },
 
-  /**
-    Changes this user's username.
+  @computed("suspended_till")
+  suspendedTillDate(suspendedTill) {
+    return longDate(suspendedTill);
+  },
 
-    @method changeUsername
-    @param {String} newUsername The user's new username
-    @returns Result of ajax call
-  **/
-  changeUsername: function(newUsername) {
-    return Discourse.ajax("/users/" + this.get('username_lower') + "/preferences/username", {
+  changeUsername(new_username) {
+    return ajax(`/users/${this.get('username_lower')}/preferences/username`, {
       type: 'PUT',
-      data: { new_username: newUsername }
+      data: { new_username }
     });
   },
 
-  /**
-    Changes this user's email address.
-
-    @method changeEmail
-    @param {String} email The user's new email address\
-    @returns Result of ajax call
-  **/
-  changeEmail: function(email) {
-    return Discourse.ajax("/users/" + this.get('username_lower') + "/preferences/email", {
+  changeEmail(email) {
+    return ajax(`/users/${this.get('username_lower')}/preferences/email`, {
       type: 'PUT',
-      data: { email: email }
+      data: { email }
     });
   },
 
-  /**
-    Returns a copy of this user.
-
-    @method copy
-    @returns {User}
-  **/
-  copy: function() {
-    return Discourse.User.create(this.getProperties(Ember.keys(this)));
+  copy() {
+    return Discourse.User.create(this.getProperties(Object.keys(this)));
   },
 
-  /**
-    Save's this user's properties over AJAX via a PUT request.
+  save() {
+    const data = this.getProperties(
+      'bio_raw',
+      'website',
+      'location',
+      'name',
+      'locale',
+      'custom_fields',
+      'user_fields',
+      'muted_usernames',
+      'profile_background',
+      'card_background',
+      'muted_tags',
+      'tracked_tags',
+      'watched_tags',
+      'watching_first_post_tags',
+      'date_of_birth');
 
-    @method save
-    @returns {Promise} the result of the operation
-  **/
-  save: function() {
-    const self = this,
-          data = this.getProperties(
-            'auto_track_topics_after_msecs',
-            'bio_raw',
-            'website',
-            'location',
-            'name',
-            'locale',
-            'email_digests',
-            'email_direct',
-            'email_always',
-            'email_private_messages',
-            'dynamic_favicon',
-            'digest_after_days',
-            'new_topic_duration_minutes',
-            'external_links_in_new_tab',
-            'mailing_list_mode',
-            'enable_quoting',
-            'disable_jump_reply',
-            'custom_fields',
-            'user_fields',
-            'muted_usernames',
-            'profile_background',
-            'card_background'
-          );
-
-    ['muted','watched','tracked'].forEach(function(s){
-      var cats = self.get(s + 'Categories').map(function(c){ return c.get('id')});
-      // HACK: denote lack of categories
-      if(cats.length === 0) { cats = [-1]; }
-      data[s + '_category_ids'] = cats;
+    ['email_always',
+     'mailing_list_mode',
+     'mailing_list_mode_frequency',
+     'external_links_in_new_tab',
+     'email_digests',
+     'email_direct',
+     'email_in_reply_to',
+     'email_private_messages',
+     'email_previous_replies',
+     'dynamic_favicon',
+     'enable_quoting',
+     'disable_jump_reply',
+     'automatically_unpin_topics',
+     'digest_after_minutes',
+     'new_topic_duration_minutes',
+     'auto_track_topics_after_msecs',
+     'notification_level_when_replying',
+     'like_notification_frequency',
+     'include_tl0_in_digests'
+    ].forEach(s => {
+      data[s] = this.get(`user_option.${s}`);
     });
 
-    if (!Discourse.SiteSettings.edit_history_visible_to_public) {
-      data['edit_history_public'] = this.get('edit_history_public');
-    }
+    var updatedState = {};
+
+    ['muted','watched','tracked','watched_first_post'].forEach(s => {
+      let prop = s === "watched_first_post" ? "watchedFirstPostCategories" : s + "Categories";
+      let cats = this.get(prop);
+      if (cats) {
+        let cat_ids = cats.map(c => c.get('id'));
+        updatedState[s + '_category_ids'] = cat_ids;
+
+        // HACK: denote lack of categories
+        if (cats.length === 0) { cat_ids = [-1]; }
+        data[s + '_category_ids'] = cat_ids;
+      }
+    });
 
     // TODO: We can remove this when migrated fully to rest model.
     this.set('isSaving', true);
-    return Discourse.ajax("/users/" + this.get('username_lower'), {
+    return ajax(`/users/${this.get('username_lower')}.json`, {
       data: data,
       type: 'PUT'
-    }).then(function(data) {
-      self.set('bio_excerpt',data.user.bio_excerpt);
-
-      var userProps = self.getProperties('enable_quoting', 'external_links_in_new_tab', 'dynamic_favicon');
+    }).then(result => {
+      this.set('bio_excerpt', result.user.bio_excerpt);
+      const userProps = Em.getProperties(this.get('user_option'),'enable_quoting', 'external_links_in_new_tab', 'dynamic_favicon');
       Discourse.User.current().setProperties(userProps);
+      this.setProperties(updatedState);
     }).finally(() => {
       this.set('isSaving', false);
     });
   },
 
-  /**
-    Changes the password and calls the callback function on AJAX.complete.
-
-    @method changePassword
-    @returns {Promise} the result of the change password operation
-  **/
-  changePassword: function() {
-    return Discourse.ajax("/session/forgot_password", {
+  changePassword() {
+    return ajax("/session/forgot_password", {
       dataType: 'json',
       data: { login: this.get('username') },
       type: 'POST'
     });
   },
 
-  /**
-    Loads a single user action by id.
-
-    @method loadUserAction
-    @param {Integer} id The id of the user action being loaded
-    @returns A stream of the user's actions containing the action of id
-  **/
-  loadUserAction: function(id) {
-    var self = this,
-        stream = this.get('stream');
-    return Discourse.ajax("/user_actions/" + id + ".json", { cache: 'false' }).then(function(result) {
+  loadUserAction(id) {
+    const stream = this.get('stream');
+    return ajax(`/user_actions/${id}.json`, { cache: 'false' }).then(result => {
       if (result && result.user_action) {
-        var ua = result.user_action;
+        const ua = result.user_action;
 
-        if ((self.get('stream.filter') || ua.action_type) !== ua.action_type) return;
-        if (!self.get('stream.filter') && !self.inAllStream(ua)) return;
+        if ((this.get('stream.filter') || ua.action_type) !== ua.action_type) return;
+        if (!this.get('stream.filter') && !this.inAllStream(ua)) return;
 
-        var action = Discourse.UserAction.collapseStream([Discourse.UserAction.create(ua)]);
+        ua.title = emojiUnescape(Handlebars.Utils.escapeExpression(ua.title));
+        const action = UserAction.collapseStream([UserAction.create(ua)]);
         stream.set('itemsLoaded', stream.get('itemsLoaded') + 1);
         stream.get('content').insertAt(0, action[0]);
       }
     });
   },
 
-  inAllStream: function(ua) {
-    return ua.action_type === Discourse.UserAction.TYPES.posts ||
-           ua.action_type === Discourse.UserAction.TYPES.topics;
+  inAllStream(ua) {
+    return ua.action_type === UserAction.TYPES.posts ||
+           ua.action_type === UserAction.TYPES.topics;
+  },
+
+  @computed("groups.[]")
+  displayGroups() {
+    const groups = this.get('groups') || [];
+    const filtered = groups.filter(group => {
+      return !group.automatic || group.name === "moderators";
+    });
+    return filtered.length === 0 ? null : filtered;
   },
 
   // The user's stat count, excluding PMs.
-  statsCountNonPM: function() {
-    var self = this;
-
-    if (this.blank('statsExcludingPms')) return 0;
-    var count = 0;
-    _.each(this.get('statsExcludingPms'), function(val) {
-      if (self.inAllStream(val)){
+  @computed("statsExcludingPms.@each.count")
+  statsCountNonPM() {
+    if (Ember.isEmpty(this.get('statsExcludingPms'))) return 0;
+    let count = 0;
+    _.each(this.get('statsExcludingPms'), val => {
+      if (this.inAllStream(val)) {
         count += val.count;
       }
     });
     return count;
-  }.property('statsExcludingPms.@each.count'),
+  },
 
   // The user's stats, excluding PMs.
-  statsExcludingPms: function() {
-    if (this.blank('stats')) return [];
-    return this.get('stats').rejectProperty('isPM');
-  }.property('stats.@each.isPM'),
+  @computed("stats.@each.isPM")
+  statsExcludingPms() {
+    if (Ember.isEmpty(this.get('stats'))) return [];
+    return this.get('stats').rejectBy('isPM');
+  },
 
-  findDetails: function(options) {
-    var user = this;
+  findDetails(options) {
+    const user = this;
 
-    return PreloadStore.getAndRemove("user_" + user.get('username'), function() {
-      return Discourse.ajax("/users/" + user.get('username') + '.json', {data: options});
-    }).then(function (json) {
+    return PreloadStore.getAndRemove(`user_${user.get('username')}`, () => {
+      return ajax(`/users/${user.get('username')}.json`, { data: options });
+    }).then(json => {
 
       if (!Em.isEmpty(json.user.stats)) {
-        json.user.stats = Discourse.User.groupStats(_.map(json.user.stats,function(s) {
+        json.user.stats = Discourse.User.groupStats(_.map(json.user.stats, s => {
           if (s.count) s.count = parseInt(s.count, 10);
-          return Discourse.UserActionStat.create(s);
+          return UserActionStat.create(s);
         }));
       }
 
-      if (!Em.isEmpty(json.user.custom_groups)) {
-        json.user.custom_groups = json.user.custom_groups.map(function (g) {
-          return Discourse.Group.create(g);
-        });
+      if (!Em.isEmpty(json.user.groups)) {
+        const groups = [];
+
+        for(let i = 0; i < json.user.groups.length; i++) {
+          const group = Group.create(json.user.groups[i]);
+          group.group_user = json.user.group_users[i];
+          groups.push(group);
+        }
+
+        json.user.groups = groups;
       }
 
       if (json.user.invited_by) {
@@ -311,17 +357,15 @@ const User = RestModel.extend({
       }
 
       if (!Em.isEmpty(json.user.featured_user_badge_ids)) {
-        var userBadgesMap = {};
-        Discourse.UserBadge.createFromJson(json).forEach(function(userBadge) {
+        const userBadgesMap = {};
+        UserBadge.createFromJson(json).forEach(userBadge => {
           userBadgesMap[ userBadge.get('id') ] = userBadge;
         });
-        json.user.featured_user_badges = json.user.featured_user_badge_ids.map(function(id) {
-          return userBadgesMap[id];
-        });
+        json.user.featured_user_badges = json.user.featured_user_badge_ids.map(id => userBadgesMap[id]);
       }
 
       if (json.user.card_badge) {
-        json.user.card_badge = Discourse.Badge.create(json.user.card_badge);
+        json.user.card_badge = Badge.create(json.user.card_badge);
       }
 
       user.setProperties(json.user);
@@ -329,78 +373,71 @@ const User = RestModel.extend({
     });
   },
 
-  findStaffInfo: function() {
+  findStaffInfo() {
     if (!Discourse.User.currentProp("staff")) { return Ember.RSVP.resolve(null); }
-    var self = this;
-    return Discourse.ajax("/users/" + this.get("username_lower") + "/staff-info.json").then(function(info) {
-      self.setProperties(info);
+    return ajax(`/users/${this.get("username_lower")}/staff-info.json`).then(info => {
+      this.setProperties(info);
     });
   },
 
-  avatarTemplate: function() {
-    return avatarTemplate(this.get('username'), this.get('uploaded_avatar_id'));
-  }.property('uploaded_avatar_id', 'username'),
-
-  /*
-    Change avatar selection
-  */
-  pickAvatar: function(uploadId) {
-    var self = this;
-
-    return Discourse.ajax("/users/" + this.get("username_lower") + "/preferences/avatar/pick", {
+  pickAvatar(upload_id, type, avatar_template) {
+    return ajax(`/users/${this.get("username_lower")}/preferences/avatar/pick`, {
       type: 'PUT',
-      data: { upload_id: uploadId }
-    }).then(function(){
-      self.set('uploaded_avatar_id', uploadId);
-    });
+      data: { upload_id, type }
+    }).then(() => this.setProperties({
+      avatar_template,
+      uploaded_avatar_id: upload_id
+    }));
   },
 
-  /**
-    Determines whether the current user is allowed to upload a file.
-
-    @method isAllowedToUploadAFile
-    @param {String} type The type of the upload (image, attachment)
-    @returns true if the current user is allowed to upload a file
-  **/
-  isAllowedToUploadAFile: function(type) {
+  isAllowedToUploadAFile(type) {
     return this.get('staff') ||
            this.get('trust_level') > 0 ||
            Discourse.SiteSettings['newuser_max_' + type + 's'] > 0;
   },
 
-  /**
-    Invite a user to the site
-
-    @method createInvite
-    @param {String} email The email address of the user to invite to the site
-    @returns {Promise} the result of the server call
-  **/
-  createInvite: function(email, groupNames) {
-    return Discourse.ajax('/invites', {
+  createInvite(email, group_names, custom_message) {
+    return ajax('/invites', {
       type: 'POST',
-      data: {email: email, group_names: groupNames}
+      data: { email, group_names, custom_message }
     });
   },
 
-  updateMutedCategories: function() {
+  generateInviteLink(email, group_names, topic_id) {
+    return ajax('/invites/link', {
+      type: 'POST',
+      data: { email, group_names, topic_id }
+    });
+  },
+
+  @observes("muted_category_ids")
+  updateMutedCategories() {
     this.set("mutedCategories", Discourse.Category.findByIds(this.muted_category_ids));
-  }.observes("muted_category_ids"),
+  },
 
-  updateTrackedCategories: function() {
+  @observes("tracked_category_ids")
+  updateTrackedCategories() {
     this.set("trackedCategories", Discourse.Category.findByIds(this.tracked_category_ids));
-  }.observes("tracked_category_ids"),
+  },
 
-  updateWatchedCategories: function() {
+  @observes("watched_category_ids")
+  updateWatchedCategories() {
     this.set("watchedCategories", Discourse.Category.findByIds(this.watched_category_ids));
-  }.observes("watched_category_ids"),
+  },
 
-  canDeleteAccount: function() {
-    return this.get('can_delete_account') && ((this.get('reply_count')||0) + (this.get('topic_count')||0)) <= 1;
-  }.property('can_delete_account', 'reply_count', 'topic_count'),
+  @observes("watched_first_post_category_ids")
+  updateWatchedFirstPostCategories() {
+    this.set("watchedFirstPostCategories", Discourse.Category.findByIds(this.watched_first_post_category_ids));
+  },
+
+  @computed("can_delete_account", "reply_count", "topic_count")
+  canDeleteAccount(canDeleteAccount, replyCount, topicCount) {
+    return !Discourse.SiteSettings.enable_sso && canDeleteAccount && ((replyCount || 0) + (topicCount || 0)) <= 1;
+  },
 
   "delete": function() {
     if (this.get('can_delete_account')) {
-      return Discourse.ajax("/users/" + this.get('username'), {
+      return ajax("/users/" + this.get('username'), {
         type: 'DELETE',
         data: {context: window.location.pathname}
       });
@@ -409,42 +446,75 @@ const User = RestModel.extend({
     }
   },
 
-  dismissBanner: function (bannerKey) {
+  dismissBanner(bannerKey) {
     this.set("dismissed_banner_key", bannerKey);
-    Discourse.ajax("/users/" + this.get('username'), {
+    ajax(`/users/${this.get('username')}`, {
       type: 'PUT',
       data: { dismissed_banner_key: bannerKey }
     });
   },
 
-  checkEmail: function () {
-    var self = this;
-    return Discourse.ajax("/users/" + this.get("username_lower") + "/emails.json", {
-      type: "PUT",
+  checkEmail() {
+    return ajax(`/users/${this.get("username_lower")}/emails.json`, {
       data: { context: window.location.pathname }
-    }).then(function (result) {
+    }).then(result => {
       if (result) {
-        self.setProperties({
+        this.setProperties({
           email: result.email,
           associated_accounts: result.associated_accounts
         });
       }
-    }, function () {});
+    });
+  },
+
+  summary() {
+    return ajax(`/users/${this.get("username_lower")}/summary.json`)
+           .then(json => {
+              const summary = json["user_summary"];
+              const topicMap = {};
+              const badgeMap = {};
+
+              json.topics.forEach(t => topicMap[t.id] = Topic.create(t));
+              Badge.createFromJson(json).forEach(b => badgeMap[b.id] = b );
+
+              summary.topics = summary.topic_ids.map(id => topicMap[id]);
+
+              summary.replies.forEach(r => {
+                r.topic = topicMap[r.topic_id];
+                r.url = r.topic.urlForPostNumber(r.post_number);
+                r.createdAt = new Date(r.created_at);
+              });
+
+              summary.links.forEach(l => {
+                l.topic = topicMap[l.topic_id];
+                l.post_url = l.topic.urlForPostNumber(l.post_number);
+              });
+
+              if (summary.badges) {
+                summary.badges = summary.badges.map(ub => {
+                  const badge = badgeMap[ub.badge_id];
+                  badge.count = ub.count;
+                  return badge;
+                });
+              }
+
+              return summary;
+           });
   }
 
 });
 
-User.reopenClass(Discourse.Singleton, {
+User.reopenClass(Singleton, {
 
   // Find a `Discourse.User` for a given username.
-  findByUsername: function(username, options) {
-    const user = Discourse.User.create({username: username});
+  findByUsername(username, options) {
+    const user = User.create({username: username});
     return user.findDetails(options);
   },
 
-  // TODO: Use app.register and junk Discourse.Singleton
-  createCurrent: function() {
-    var userJson = PreloadStore.get('currentUser');
+  // TODO: Use app.register and junk Singleton
+  createCurrent() {
+    const userJson = PreloadStore.get('currentUser');
     if (userJson) {
       const store = Discourse.__container__.lookup('store:main');
       return store.createRecord('user', userJson);
@@ -452,72 +522,39 @@ User.reopenClass(Discourse.Singleton, {
     return null;
   },
 
-  /**
-    Logs out the currently logged in user
-
-    @method logout
-    @returns {Promise} resolved when the logout finishes
-  **/
-  logout: function() {
-    var discourseUserClass = this;
-    return Discourse.ajax("/session/" + Discourse.User.currentProp('username'), {
-      type: 'DELETE'
-    }).then(function () {
-      discourseUserClass.currentUser = null;
+  checkUsername(username, email, for_user_id) {
+    return ajax('/users/check_username', {
+      data: { username, email, for_user_id }
     });
   },
 
-  /**
-    Checks if given username is valid for this email address
-
-    @method checkUsername
-    @param {String} username A username to check
-    @param {String} email An email address to check
-    @param {Number} forUserId user id - provide when changing username
-  **/
-  checkUsername: function(username, email, forUserId) {
-    return Discourse.ajax('/users/check_username', {
-      data: { username: username, email: email, for_user_id: forUserId }
-    });
-  },
-
-  /**
-    Groups the user's statistics
-
-    @method groupStats
-    @param {Array} stats Given stats
-    @returns {Object}
-  **/
-  groupStats: function(stats) {
-    var responses = Discourse.UserActionStat.create({
+  groupStats(stats) {
+    const responses = UserActionStat.create({
       count: 0,
-      action_type: Discourse.UserAction.TYPES.replies
+      action_type: UserAction.TYPES.replies
     });
 
-    stats.filterProperty('isResponse').forEach(function (stat) {
+    stats.filterBy('isResponse').forEach(stat => {
       responses.set('count', responses.get('count') + stat.get('count'));
     });
 
-    var result = Em.A();
-    result.pushObjects(stats.rejectProperty('isResponse'));
+    const result = Em.A();
+    result.pushObjects(stats.rejectBy('isResponse'));
 
-    var insertAt = 0;
-    result.forEach(function(item, index){
-     if(item.action_type === Discourse.UserAction.TYPES.topics || item.action_type === Discourse.UserAction.TYPES.posts){
+    let insertAt = 0;
+    result.forEach((item, index) => {
+     if (item.action_type === UserAction.TYPES.topics || item.action_type === UserAction.TYPES.posts) {
        insertAt = index + 1;
      }
     });
-    if(responses.count > 0) {
+    if (responses.count > 0) {
       result.insertAt(insertAt, responses);
     }
-    return(result);
+    return result;
   },
 
-  /**
-    Creates a new account
-  **/
-  createAccount: function(attrs) {
-    return Discourse.ajax("/users", {
+  createAccount(attrs) {
+    return ajax("/users", {
       data: {
         name: attrs.accountName,
         email: attrs.accountEmail,

@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'email/message_builder'
 
 describe Email::MessageBuilder do
@@ -24,6 +24,10 @@ describe Email::MessageBuilder do
 
   it "has a utf-8 charset" do
     expect(builder.build_args[:charset]).to eq("UTF-8")
+  end
+
+  it "ask politely not to receive automated responses" do
+    expect(header_args['X-Auto-Response-Suppress']).to eq("All")
   end
 
   context "reply by email" do
@@ -54,12 +58,12 @@ describe Email::MessageBuilder do
         end
 
         it "returns a Reply-To header with the reply key" do
-          expect(reply_by_email_builder.header_args['Reply-To']).to eq(SiteSetting.title + " <r+#{reply_key}@reply.myforum.com>")
+          expect(reply_by_email_builder.header_args['Reply-To']).to eq("\"#{SiteSetting.title}\" <r+#{reply_key}@reply.myforum.com>")
         end
 
         it "cleans up the site title" do
-          SiteSetting.stubs(:title).returns(">>>Obnoxious Title: Deal, With It<<<")
-          expect(reply_by_email_builder.header_args['Reply-To']).to eq("Obnoxious Title Deal With It <r+#{reply_key}@reply.myforum.com>")
+          SiteSetting.stubs(:title).returns(">>>Obnoxious Title: Deal, \"With\" It<<<")
+          expect(reply_by_email_builder.header_args['Reply-To']).to eq("\"Obnoxious Title Deal With It\" <r+#{reply_key}@reply.myforum.com>")
         end
       end
 
@@ -94,7 +98,7 @@ describe Email::MessageBuilder do
         end
 
         it "returns a Reply-To header with the reply key" do
-          expect(reply_by_email_builder.header_args['Reply-To']).to eq("Username <r+#{reply_key}@reply.myforum.com>")
+          expect(reply_by_email_builder.header_args['Reply-To']).to eq("\"Username\" <r+#{reply_key}@reply.myforum.com>")
         end
       end
 
@@ -136,10 +140,14 @@ describe Email::MessageBuilder do
 
   context "header args" do
 
-    let(:message_with_header_args) { Email::MessageBuilder.new(to_address,
-                                                               body: 'hello world',
-                                                               topic_id: 1234,
-                                                               post_id: 4567) }
+    let(:message_with_header_args) do
+      Email::MessageBuilder.new(
+        to_address,
+        body: 'hello world',
+        topic_id: 1234,
+        post_id: 4567,
+      )
+    end
 
     it "passes through a post_id" do
       expect(message_with_header_args.header_args['X-Discourse-Post-Id']).to eq('4567')
@@ -168,14 +176,20 @@ describe Email::MessageBuilder do
 
       let(:message_with_unsubscribe) { Email::MessageBuilder.new(to_address,
                                                                 body: 'hello world',
-                                                                add_unsubscribe_link: true) }
+                                                                add_unsubscribe_link: true,
+                                                                url: "/t/1234",
+                                                                unsubscribe_url: "/t/1234/unsubscribe") }
 
       it "has an List-Unsubscribe header" do
         expect(message_with_unsubscribe.header_args['List-Unsubscribe']).to be_present
       end
 
-      it "has the user preferences url in the body" do
-        expect(message_with_unsubscribe.body).to match(builder.template_args[:user_preferences_url])
+      it "has the unsubscribe url in the body" do
+        expect(message_with_unsubscribe.body).to match('/t/1234/unsubscribe')
+      end
+
+      it "does not add unsubscribe via email link without site setting set" do
+        expect(message_with_unsubscribe.body).to_not match(/mailto:reply@#{Discourse.current_hostname}\?subject=unsubscribe/)
       end
 
     end
@@ -223,7 +237,13 @@ describe Email::MessageBuilder do
   context "from field" do
 
     it "has the default from" do
+      SiteSetting.title = ""
       expect(build_args[:from]).to eq(SiteSetting.notification_email)
+    end
+
+    it "title setting will be added if present" do
+      SiteSetting.title = "Dog Talk"
+      expect(build_args[:from]).to eq("\"Dog Talk\" <#{SiteSetting.notification_email}>")
     end
 
     let(:finn_email) { 'finn@adventuretime.ooo' }
@@ -236,7 +256,7 @@ describe Email::MessageBuilder do
     let(:aliased_from) { Email::MessageBuilder.new(to_address, from_alias: "Finn the Dog") }
 
     it "allows us to alias the from address" do
-      expect(aliased_from.build_args[:from]).to eq("Finn the Dog <#{SiteSetting.notification_email}>")
+      expect(aliased_from.build_args[:from]).to eq("\"Finn the Dog\" <#{SiteSetting.notification_email}>")
     end
 
     let(:custom_aliased_from) { Email::MessageBuilder.new(to_address,
@@ -244,22 +264,28 @@ describe Email::MessageBuilder do
                                                           from: finn_email) }
 
     it "allows us to alias a custom from address" do
-      expect(custom_aliased_from.build_args[:from]).to eq("Finn the Dog <#{finn_email}>")
+      expect(custom_aliased_from.build_args[:from]).to eq("\"Finn the Dog\" <#{finn_email}>")
     end
 
     it "email_site_title will be added if it's set" do
-      SiteSetting.stubs(:email_site_title).returns("The Forum")
-      expect(build_args[:from]).to eq("The Forum <#{SiteSetting.notification_email}>")
+      SiteSetting.email_site_title = "The Forum"
+      expect(build_args[:from]).to eq("\"The Forum\" <#{SiteSetting.notification_email}>")
+    end
+
+    it "email_site_title overrides title" do
+      SiteSetting.title = "Dog Talk"
+      SiteSetting.email_site_title = "The Forum"
+      expect(build_args[:from]).to eq("\"The Forum\" <#{SiteSetting.notification_email}>")
     end
 
     it "cleans up aliases in the from_alias arg" do
       builder = Email::MessageBuilder.new(to_address, from_alias: "Finn: the Dog, <3", from: finn_email)
-      expect(builder.build_args[:from]).to eq("Finn the Dog 3 <#{finn_email}>")
+      expect(builder.build_args[:from]).to eq("\"Finn the Dog 3\" <#{finn_email}>")
     end
 
     it "cleans up the email_site_title" do
-      SiteSetting.stubs(:email_site_title).returns("::>>>Best Forum, EU: Award Winning<<<")
-      expect(build_args[:from]).to eq("Best Forum EU Award Winning <#{SiteSetting.notification_email}>")
+      SiteSetting.stubs(:email_site_title).returns("::>>>Best \"Forum\", EU: Award Winning<<<")
+      expect(build_args[:from]).to eq("\"Best Forum EU Award Winning\" <#{SiteSetting.notification_email}>")
     end
 
   end

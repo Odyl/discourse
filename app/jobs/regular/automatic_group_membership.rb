@@ -13,9 +13,17 @@ module Jobs
 
       domains = group.automatic_membership_email_domains.gsub('.', '\.')
 
-      User.where("email ~* '@(#{domains})$'").find_each do |user|
-        group.add(user) rescue ActiveRecord::RecordNotUnique
+      User.where("email ~* '@(#{domains})$'")
+          .where("users.id NOT IN (SELECT user_id FROM group_users WHERE group_users.group_id = ?)", group_id)
+          .activated
+          .where(staged: false)
+          .find_each do |user|
+
+          group.add(user)
+          GroupActionLogger.new(Discourse.system_user, group).log_add_user_to_group(user)
       end
+
+      Group.reset_counters(group.id, :group_users)
     end
 
   end

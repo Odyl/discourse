@@ -6,68 +6,70 @@ def rails_master?
   ENV["RAILS_MASTER"] == '1'
 end
 
-def rails_42?
-  ENV["RAILS42"] == '1'
-end
-
 if rails_master?
   gem 'arel', git: 'https://github.com/rails/arel.git'
   gem 'rails', git: 'https://github.com/rails/rails.git'
-  gem 'rails-observers', git: 'https://github.com/rails/rails-observers.git'
   gem 'seed-fu', git: 'https://github.com/SamSaffron/seed-fu.git', branch: 'discourse'
-elsif rails_42?
-  gem 'rails', '~> 4.2.1'
-  gem 'rails-observers', git: 'https://github.com/rails/rails-observers.git'
-  gem 'seed-fu', '~> 2.3.5'
 else
-  gem 'rails', '~> 4.1.10'
-  gem 'rails-observers'
-  gem 'seed-fu', '~> 2.3.3'
+  # Rails 5 is going to ship with Action Cable, we have no use for it as
+  # we already ship MessageBus, AC introduces dependencies on Event Machine,
+  # Celluloid and Faye Web Sockets.
+  #
+  # Note this means upgrading Rails is more annoying, to do so, comment out the
+  # explicit dependencies, and add gem 'rails', bundle update rails and then
+  # comment back the explicit dependencies. Leaving this in a comment till we
+  # upgrade to Rails 5
+  #
+  # gem 'activesupport'
+  # gem 'actionpack'
+  # gem 'activerecord'
+  # gem 'actionmailer'
+  # gem 'activejob'
+  # gem 'railties'
+  # gem 'sprockets-rails'
+  gem 'rails', '~> 4.2'
+  gem 'seed-fu', '~> 2.3.5'
 end
 
-gem 'actionpack-action_caching'
+gem 'mail'
+gem 'mime-types', require: 'mime/types/columnar'
 
-# Rails 4.1.6+ will relax the mail gem version requirement to `~> 2.5, >= 2.5.4`.
-# However, mail gem 2.6.x currently does not work with discourse because of the
-# reference to `Mail::RFC2822Parser` in `lib/email.rb`. This ensure discourse
-# would continue to work with Rails 4.1.6+ when it is released.
-gem 'mail', '~> 2.5.4'
-
-#gem 'redis-rails'
 gem 'hiredis'
 gem 'redis', require:  ["redis", "redis/connection/hiredis"]
+gem 'redis-namespace'
 
 gem 'active_model_serializers', '~> 0.8.3'
 
 gem 'onebox'
 
-gem 'ember-rails'
-gem 'ember-source', '1.11.3.1'
-gem 'handlebars-source', '2.0.0'
+gem 'http_accept_language', '~>2.0.5', require: false
+
+gem 'ember-rails', '0.18.5'
+gem 'ember-source', '2.10.0'
+gem 'ember-handlebars-template', '0.7.5'
 gem 'barber'
 gem 'babel-transpiler'
 
 gem 'message_bus'
-gem 'rails_multisite', path: 'vendor/gems/rails_multisite'
 
-gem 'redcarpet', require: false
+gem 'rails_multisite'
+
 gem 'fast_xs'
 
 gem 'fast_xor'
 
 # while we sort out https://github.com/sdsykes/fastimage/pull/46
-gem 'fastimage_discourse', require: 'fastimage'
+gem 'discourse_fastimage', '2.0.3', require: 'fastimage'
 gem 'aws-sdk', require: false
 gem 'excon', require: false
 gem 'unf', require: false
 
-gem 'email_reply_parser'
+gem 'email_reply_trimmer', '0.1.6'
 
-# note: for image_optim to correctly work you need
-# sudo apt-get install -y advancecomp gifsicle jpegoptim libjpeg-progs optipng pngcrush
-#
-# Sam: held back, getting weird errors in latest
-gem 'image_optim', '0.9.1'
+# note: for image_optim to correctly work you need to follow
+# https://github.com/toy/image_optim
+# pinned due to https://github.com/toy/image_optim/pull/75, docker image must be upgraded to upgrade
+gem 'image_optim', '0.20.2'
 gem 'multi_json'
 gem 'mustache'
 gem 'nokogiri'
@@ -76,11 +78,13 @@ gem 'omniauth-openid'
 gem 'openid-redis-store'
 gem 'omniauth-facebook'
 gem 'omniauth-twitter'
+gem 'omniauth-instagram'
 
 # forked while https://github.com/intridea/omniauth-github/pull/41 is being upstreamd
 gem 'omniauth-github-discourse', require: 'omniauth-github'
 
 gem 'omniauth-oauth2', require: false
+
 gem 'omniauth-google-oauth2'
 gem 'oj'
 gem 'pg'
@@ -88,18 +92,19 @@ gem 'pry-rails', require: false
 gem 'r2', '~> 0.2.5', require: false
 gem 'rake'
 
-
+gem 'thor', require: false
 gem 'rest-client'
 gem 'rinku'
 gem 'sanitize'
 gem 'sass'
+gem 'sass-rails'
 gem 'sidekiq'
+gem 'sidekiq-statistic'
 
 # for sidekiq web
 gem 'sinatra', require: false
-
-gem 'therubyracer'
-gem 'thin', require: false
+gem 'execjs', require: false
+gem 'mini_racer'
 gem 'highline', require: false
 gem 'rack-protection' # security
 
@@ -107,7 +112,6 @@ gem 'rack-protection' # security
 # in production environments by default.
 # allow everywhere for now cause we are allowing asset debugging in prd
 group :assets do
-  gem 'sass-rails', '~> 4.0.5'
   gem 'uglifier'
   gem 'rtlit', require: false # for css rtling
 end
@@ -115,10 +119,11 @@ end
 group :test do
   gem 'fakeweb', '~> 1.3.0', require: false
   gem 'minitest', require: false
+  gem 'timecop'
 end
 
 group :test, :development do
-  gem 'rspec', '~> 3.2.0'
+  gem 'rspec'
   gem 'mock_redis'
   gem 'listen', '0.7.3', require: false
   gem 'certified', require: false
@@ -130,17 +135,16 @@ group :test, :development do
   gem 'rb-inotify', '~> 0.9', require: RUBY_PLATFORM =~ /linux/i ? 'rb-inotify' : false
   gem 'rspec-rails', require: false
   gem 'shoulda', require: false
-  gem 'simplecov', require: false
-  gem 'timecop'
-  gem 'rspec-given'
-  gem 'pry-nav'
+  gem 'rspec-html-matchers'
   gem 'spork-rails'
+  gem 'pry-nav'
+  gem 'byebug', require: ENV['RM_INFO'].nil?
 end
 
 group :development do
+  gem 'bullet', require: !!ENV['BULLET']
   gem 'better_errors'
   gem 'binding_of_caller'
-  gem 'librarian', '>= 0.0.25', require: false
   gem 'annotate'
   gem 'foreman', require: false
 end
@@ -165,35 +169,16 @@ gem 'rack-mini-profiler', require: false
 gem 'unicorn', require: false
 gem 'puma', require: false
 gem 'rbtrace', require: false, platform: :mri
+gem 'gc_tracer', require: false, platform: :mri
 
 # required for feed importing and embedding
 #
 gem 'ruby-readability', require: false
-
 gem 'simple-rss', require: false
 
-gem 'gctools', require: false, platform: :mri_21
-
-begin
-  gem 'stackprof', require: false, platform: [:mri_21, :mri_22]
-  gem 'memory_profiler', require: false, platform: [:mri_21, :mri_22]
-rescue Bundler::GemfileError
-  STDERR.puts "You are running an old version of bundler, please upgrade bundler ASAP, if you are using Discourse docker, rebuild your container."
-  gem 'stackprof', require: false, platform: [:mri_21]
-  gem 'memory_profiler', require: false, platform: [:mri_21]
-end
+gem 'stackprof', require: false, platform: :mri
+gem 'memory_profiler', require: false, platform: :mri
 
 gem 'rmmseg-cpp', require: false
 
 gem 'logster'
-
-# perftools only works on 1.9 atm
-group :profile do
-  # travis refuses to install this, instead of fuffing, just avoid it for now
-  #
-  # if you need to profile, uncomment out this line
-  # gem 'rack-perftools_profiler', require: 'rack/perftools_profiler', platform: :mri_19
-end
-
-# Riffle-specific gems
-gem 'rails_12factor', group: :production

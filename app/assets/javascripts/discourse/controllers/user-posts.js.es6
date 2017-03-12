@@ -1,7 +1,7 @@
-export default Ember.ObjectController.extend({
-  needs: ["application"],
+export default Ember.Controller.extend({
+  application: Ember.inject.controller(),
 
   _showFooter: function() {
-    this.set("controllers.application.showFooter", !this.get("canLoadMore"));
-  }.observes("canLoadMore")
+    this.set("application.showFooter", !this.get("model.canLoadMore"));
+  }.observes("model.canLoadMore")
 });

@@ -1,39 +1,44 @@
-import ShowFooter from "discourse/mixins/show-footer";
+import StaticPage from 'discourse/models/static-page';
+import { default as DiscourseURL, jumpToElement } from 'discourse/lib/url';
 
-var configs = {
-  'faq': 'faq_url',
-  'tos': 'tos_url',
-  'privacy': 'privacy_policy_url'
+const configs = {
+  "faq": "faq_url",
+  "tos": "tos_url",
+  "privacy": "privacy_policy_url"
 };
 
 export default function(page) {
-  return Discourse.Route.extend(ShowFooter, {
-    renderTemplate: function() {
-      this.render('static');
+  return Discourse.Route.extend({
+    renderTemplate() {
+      this.render("static");
     },
 
-    beforeModel: function(transition) {
-      var configKey = configs[page];
+    beforeModel(transition) {
+      const configKey = configs[page];
       if (configKey && Discourse.SiteSettings[configKey].length > 0) {
         transition.abort();
-        Discourse.URL.redirectTo(Discourse.SiteSettings[configKey]);
+        DiscourseURL.redirectTo(Discourse.SiteSettings[configKey]);
       }
     },
 
-    activate: function() {
+    activate() {
       this._super();
-
-      // Scroll to an element if exists
-      Discourse.URL.scrollToId(document.location.hash);
+      jumpToElement(document.location.hash.substr(1));
     },
 
-    model: function() {
-      return Discourse.StaticPage.find(page);
+    model() {
+      return StaticPage.find(page);
     },
 
-    setupController: function(controller, model) {
-      this.controllerFor('static').set('model', model);
+    setupController(controller, model) {
+      this.controllerFor("static").set("model", model);
+    },
+
+    actions: {
+      didTransition() {
+        this.controllerFor("application").set("showFooter", true);
+        return true;
+      }
     }
   });
-}
-
+};

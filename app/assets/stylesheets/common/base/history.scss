@@ -6,6 +6,15 @@
     min-width: 96px;
     text-align: center;
   }
+
+  #revision {
+    overflow: auto;
+  }
+
+  #revision-controls {
+    display: inline-block;
+  }
+
   #revisions .row:first-of-type {
     margin-top: 10px;
   }
@@ -30,6 +39,7 @@
     filter: alpha(opacity=75);
   }
   .diff-ins {
+    color: dark-light-choose($primary, $secondary);
     background: scale-color($success, $lightness: 90%);
   }
   ins {

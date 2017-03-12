@@ -13,7 +13,7 @@ Discourse::Application.configure do
   config.action_controller.perform_caching = true
 
   # in profile mode we serve static assets
-  config.serve_static_assets = true
+  config.serve_static_files = true
 
   # Compress JavaScripts and CSS
   config.assets.compress = true
@@ -26,10 +26,6 @@ Discourse::Application.configure do
 
   # Specifies the header that your server uses for sending files
   config.action_dispatch.x_sendfile_header = 'X-Accel-Redirect' # for nginx
-
-  # Enable locale fallbacks for I18n (makes lookups for any locale fall back to
-  # the I18n.default_locale when a translation can not be found)
-  config.i18n.fallbacks = true
 
   # we recommend you use mailcatcher https://github.com/sj26/mailcatcher
   config.action_mailer.smtp_settings = { address: "localhost", port: 1025 }

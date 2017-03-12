@@ -8,16 +8,16 @@ require_dependency 'distributed_mutex'
 
 module Scheduler
   class Manager
-    attr_accessor :random_ratio, :redis
-
+    attr_accessor :random_ratio, :redis, :enable_stats
 
     class Runner
       def initialize(manager)
+        @stopped = false
         @mutex = Mutex.new
         @queue = Queue.new
         @manager = manager
         @reschedule_orphans_thread = Thread.new do
-          while true
+          while !@stopped
             sleep 1.minute
             @mutex.synchronize do
               reschedule_orphans
@@ -25,7 +25,7 @@ module Scheduler
           end
         end
         @keep_alive_thread = Thread.new do
-          while true
+          while !@stopped
             @mutex.synchronize do
               keep_alive
             end
@@ -33,8 +33,17 @@ module Scheduler
           end
         end
         @thread = Thread.new do
-          while true
-            process_queue
+          while !@stopped
+            if @manager.enable_stats
+              begin
+                RailsMultisite::ConnectionManagement.establish_connection(db: "default")
+                process_queue
+              ensure
+                ActiveRecord::Base.connection_handler.clear_active_connections!
+              end
+            else
+              process_queue
+            end
           end
         end
       end
@@ -51,16 +60,36 @@ module Scheduler
         Discourse.handle_job_exception(ex, {message: "Scheduling manager orphan rescheduler"})
       end
 
+      def hostname
+        @hostname ||= begin
+                        `hostname`
+                      rescue
+                        "unknown"
+                      end
+      end
+
       def process_queue
         klass = @queue.deq
+        return unless klass
+
         # hack alert, I need to both deq and set @running atomically.
         @running = true
         failed = false
         start = Time.now.to_f
         info = @mutex.synchronize { @manager.schedule_info(klass) }
+        stat = nil
         begin
           info.prev_result = "RUNNING"
           @mutex.synchronize { info.write! }
+          if @manager.enable_stats
+            stat = SchedulerStat.create!(
+              name: klass.to_s,
+              hostname: hostname,
+              pid: Process.pid,
+              started_at: Time.zone.now,
+              live_slots_start: GC.stat[:heap_live_slots]
+            )
+          end
           klass.new.perform
         rescue Jobs::HandledExceptionWrapper
           # Discourse.handle_exception was already called, and we don't have any extra info to give
@@ -73,6 +102,13 @@ module Scheduler
         info.prev_duration = duration
         info.prev_result = failed ? "FAILED" : "OK"
         info.current_owner = nil
+        if stat
+          stat.update_columns(
+            duration_ms: duration,
+            live_slots_finish: GC.stat[:heap_live_slots],
+            success: !failed
+          )
+        end
         attempts(3) do
           @mutex.synchronize { info.write! }
         end
@@ -84,9 +120,17 @@ module Scheduler
 
       def stop!
         @mutex.synchronize do
-          @thread.kill
+          @stopped = true
+
           @keep_alive_thread.kill
           @reschedule_orphans_thread.kill
+
+          enq(nil)
+
+          Thread.new do
+            sleep 5
+            @thread.kill
+          end
         end
       end
 
@@ -118,17 +162,25 @@ module Scheduler
     end
 
     def self.without_runner(redis=nil)
-      self.new(redis, true)
+      self.new(redis, skip_runner: true)
     end
 
-    def initialize(redis = nil, skip_runner = false)
+    def initialize(redis = nil, options=nil)
       @redis = $redis || redis
       @random_ratio = 0.1
-      unless skip_runner
+      unless options && options[:skip_runner]
         @runner = Runner.new(self)
         self.class.current = self
       end
+
+      @hostname = options && options[:hostname]
       @manager_id = SecureRandom.hex
+
+      if options && options.key?(:enable_stats)
+        @enable_stats = options[:enable_stats]
+      else
+        @enable_stats = true
+      end
     end
 
     def self.current
@@ -137,6 +189,10 @@ module Scheduler
 
     def self.current=(manager)
       @current = manager
+    end
+
+    def hostname
+      @hostname ||= `hostname`.strip
     end
 
     def schedule_info(klass)
@@ -151,7 +207,6 @@ module Scheduler
       lock do
         schedule_info(klass).schedule!
       end
-
     end
 
     def remove(klass)
@@ -162,17 +217,22 @@ module Scheduler
 
     def reschedule_orphans!
       lock do
-        redis.zrange(Manager.queue_key, 0, -1).each do |key|
-          klass = get_klass(key)
-          next unless klass
-          info = schedule_info(klass)
+        reschedule_orphans_on!
+        reschedule_orphans_on!(hostname)
+      end
+    end
 
-          if ['QUEUED', 'RUNNING'].include?(info.prev_result) &&
-            (info.current_owner.blank? || !redis.get(info.current_owner))
-            info.prev_result = 'ORPHAN'
-            info.next_run = Time.now.to_i
-            info.write!
-          end
+    def reschedule_orphans_on!(hostname=nil)
+      redis.zrange(Manager.queue_key(hostname), 0, -1).each do |key|
+        klass = get_klass(key)
+        next unless klass
+        info = schedule_info(klass)
+
+        if ['QUEUED', 'RUNNING'].include?(info.prev_result) &&
+          (info.current_owner.blank? || !redis.get(info.current_owner))
+          info.prev_result = 'ORPHAN'
+          info.next_run = Time.now.to_i
+          info.write!
         end
       end
     end
@@ -185,24 +245,30 @@ module Scheduler
 
     def tick
       lock do
-        (key, due), _ = redis.zrange Manager.queue_key, 0, 0, withscores: true
-        return unless key
-        if due.to_i <= Time.now.to_i
-          klass = get_klass(key)
-          unless klass
-            # corrupt key, nuke it (renamed job or something)
-            redis.zrem Manager.queue_key, key
-            return
-          end
-          info = schedule_info(klass)
-          info.prev_run = Time.now.to_i
-          info.prev_result = "QUEUED"
-          info.prev_duration = -1
-          info.next_run = nil
-          info.current_owner = identity_key
-          info.schedule!
-          @runner.enq(klass)
+        schedule_next_job
+        schedule_next_job(hostname)
+      end
+    end
+
+    def schedule_next_job(hostname=nil)
+      (key, due), _ = redis.zrange Manager.queue_key(hostname), 0, 0, withscores: true
+      return unless key
+
+      if due.to_i <= Time.now.to_i
+        klass = get_klass(key)
+        unless klass
+          # corrupt key, nuke it (renamed job or something)
+          redis.zrem Manager.queue_key(hostname), key
+          return
         end
+        info = schedule_info(klass)
+        info.prev_run = Time.now.to_i
+        info.prev_result = "QUEUED"
+        info.prev_duration = -1
+        info.next_run = nil
+        info.current_owner = identity_key
+        info.schedule!
+        @runner.enq(klass)
       end
     end
 
@@ -256,19 +322,27 @@ module Scheduler
     end
 
     def identity_key
-      @identity_key ||= "_scheduler_#{`hostname`}:#{Process.pid}:#{self.class.seq}:#{SecureRandom.hex}"
+      @identity_key ||= "_scheduler_#{hostname}:#{Process.pid}:#{self.class.seq}:#{SecureRandom.hex}"
     end
 
     def self.lock_key
       "_scheduler_lock_"
     end
 
-    def self.queue_key
-      "_scheduler_queue_"
+    def self.queue_key(hostname=nil)
+      if hostname
+        "_scheduler_queue_#{hostname}_"
+      else
+        "_scheduler_queue_"
+      end
     end
 
-    def self.schedule_key(klass)
-      "_scheduler_#{klass}"
+    def self.schedule_key(klass,hostname=nil)
+      if hostname
+        "_scheduler_#{klass}_#{hostname}"
+      else
+        "_scheduler_#{klass}"
+      end
     end
   end
 end

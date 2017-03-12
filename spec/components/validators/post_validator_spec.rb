@@ -1,13 +1,18 @@
-require 'spec_helper'
+require 'rails_helper'
 require_dependency 'validators/post_validator'
 
 describe Validators::PostValidator do
-  let :post do
-    build(:post)
-  end
+  let(:post) { build(:post) }
+  let(:validator) { Validators::PostValidator.new({}) }
 
-  let :validator do
-    Validators::PostValidator.new({})
+  context "when empty raw can bypass post body validation" do
+    let(:validator) { Validators::PostValidator.new(skip_post_body: true) }
+
+    it "should be allowed for empty raw based on site setting" do
+      post.raw = ""
+      validator.post_body_validator(post)
+      expect(post.errors).to be_empty
+    end
   end
 
   context "stripped_length" do
@@ -41,6 +46,63 @@ describe Validators::PostValidator do
     it "should be valid when the user hasn't posted too much" do
       post.user.expects(:posted_too_much_in_topic?).returns(false)
       validator.max_posts_validator(post)
+      expect(post.errors.count).to be(0)
+    end
+  end
+
+  context "too_many_mentions" do
+    before do
+      SiteSetting.newuser_max_mentions_per_post = 2
+      SiteSetting.max_mentions_per_post = 3
+    end
+
+    it "should be invalid when new user exceeds max mentions limit" do
+      post.acting_user = build(:newuser)
+      post.expects(:raw_mentions).returns(['jake', 'finn', 'jake_old'])
+      validator.max_mention_validator(post)
+      expect(post.errors.count).to be > 0
+    end
+
+    it "should be invalid when leader user exceeds max mentions limit" do
+      post.acting_user = build(:trust_level_4)
+      post.expects(:raw_mentions).returns(['jake', 'finn', 'jake_old', 'jake_new'])
+      validator.max_mention_validator(post)
+      expect(post.errors.count).to be > 0
+    end
+
+    it "should be valid when new user does not exceed max mentions limit" do
+      post.acting_user = build(:newuser)
+      post.expects(:raw_mentions).returns(['jake', 'finn'])
+      validator.max_mention_validator(post)
+      expect(post.errors.count).to be(0)
+    end
+
+    it "should be valid when new user exceeds max mentions limit in PM" do
+      post.acting_user = build(:newuser)
+      post.topic.expects(:private_message?).returns(true)
+      post.expects(:raw_mentions).returns(['jake', 'finn', 'jake_old'])
+      validator.max_mention_validator(post)
+      expect(post.errors.count).to be(0)
+    end
+
+    it "should be valid when leader user does not exceed max mentions limit" do
+      post.acting_user = build(:trust_level_4)
+      post.expects(:raw_mentions).returns(['jake', 'finn', 'jake_old'])
+      validator.max_mention_validator(post)
+      expect(post.errors.count).to be(0)
+    end
+
+    it "should be valid for moderator in all cases" do
+      post.acting_user = build(:moderator)
+      post.expects(:raw_mentions).never
+      validator.max_mention_validator(post)
+      expect(post.errors.count).to be(0)
+    end
+
+    it "should be valid for admin in all cases" do
+      post.acting_user = build(:admin)
+      post.expects(:raw_mentions).never
+      validator.max_mention_validator(post)
       expect(post.errors.count).to be(0)
     end
   end
@@ -86,25 +148,32 @@ describe Validators::PostValidator do
     end
   end
 
-  context "post is for a static page and acting_user is an admin" do
+  shared_examples "almost no validations" do
+    it "skips most validations" do
+      validator.expects(:stripped_length).never
+      validator.expects(:raw_quality).never
+      validator.expects(:max_posts_validator).never
+      validator.expects(:max_mention_validator).never
+      validator.expects(:max_images_validator).never
+      validator.expects(:max_attachments_validator).never
+      validator.expects(:max_links_validator).never
+      validator.expects(:unique_post_validator).never
+      validator.validate(post)
+    end
+  end
+
+  context "admin editing a static page" do
     before do
-      @tos_post = build(:post)
-      @tos_post.acting_user = Fabricate(:admin)
-      SiteSetting.stubs(:tos_topic_id).returns(@tos_post.topic_id)
+      post.acting_user = build(:admin)
+      SiteSetting.stubs(:tos_topic_id).returns(post.topic_id)
     end
 
-    it "skips most validations" do
-      v = Validators::PostValidator.new({})
-      v.expects(:stripped_length).never
-      v.expects(:raw_quality).never
-      v.expects(:max_posts_validator).never
-      v.expects(:max_mention_validator).never
-      v.expects(:max_images_validator).never
-      v.expects(:max_attachments_validator).never
-      v.expects(:max_links_validator).never
-      v.expects(:unique_post_validator).never
-      v.validate(@tos_post)
-    end
+    include_examples "almost no validations"
+  end
+
+  context "staged user" do
+    before { post.acting_user = build(:user, staged: true) }
+    include_examples "almost no validations"
   end
 
 end

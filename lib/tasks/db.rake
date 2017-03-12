@@ -6,22 +6,6 @@ end
 # we need to run seed_fu every time we run rake db:migrate
 task 'db:migrate' => ['environment', 'set_locale'] do
   SeedFu.seed
-
-  if SiteSetting.vacuum_db_days > 0 &&
-      SiteSetting.last_vacuum < (Time.now.to_i - SiteSetting.vacuum_db_days.days.to_i)
-    puts "Running VACUUM FULL ANALYZE to reclaim DB space, this may take a while"
-    puts "Set to run every #{SiteSetting.vacuum_db_days} days (search for vacuum in site settings)"
-    puts "#{Time.now} starting..."
-    begin
-
-      Topic.exec_sql("VACUUM FULL ANALYZE")
-    rescue => e
-      puts "VACUUM failed, skipping"
-      puts e.to_s
-    end
-    SiteSetting.last_vacuum = Time.now.to_i
-    puts "#{Time.now} VACUUM done"
-  end
 end
 
 task 'test:prepare' => 'environment' do
@@ -80,7 +64,7 @@ task 'db:rebuild_indexes' => 'environment' do
       begin
         puts index_name
         User.exec_sql("DROP INDEX public.#{index_name}")
-      rescue ActiveRecord::StatementInvalid => e
+      rescue ActiveRecord::StatementInvalid
         # It's this:
         # PG::Error: ERROR:  cannot drop index category_users_pkey because constraint category_users_pkey on table category_users requires it
         # HINT:  You can drop constraint category_users_pkey on table category_users instead.
@@ -92,7 +76,7 @@ task 'db:rebuild_indexes' => 'environment' do
       index_definitions[table_name].each do |index_def|
         begin
           User.exec_sql(index_def)
-        rescue ActiveRecord::StatementInvalid => e
+        rescue ActiveRecord::StatementInvalid
           # Trying to recreate a primary key
         end
       end

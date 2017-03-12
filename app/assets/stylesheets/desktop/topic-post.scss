@@ -1,8 +1,5 @@
-.container {
-  @extend .clearfix;
+.wrap {
   max-width: $large-width;
-  margin-right: auto;
-  margin-left: auto;
 }
 
 .full-width {
@@ -22,50 +19,32 @@ h1 .topic-statuses .topic-status i {
   max-height: 40px;
   }
 
-.post-cloak {
+.topic-body {
   padding: 0;
 
   &:first-of-type {
     border-top: none;
   }
 
-.reply-to-tab {
-  z-index: 400;
-  font-size: 0.929em;
-  float: right;
-  margin: 1px 25px 0 0;
-  color: scale-color($primary, $lightness: 50%);
-}
-
-.gutter {
-  .reply-new {
-    .discourse-no-touch & {
-      opacity:0;
-      transition: opacity 0.7s ease-in-out;
-    }
-    .discourse-touch & {opacity: 1;}
-  }
-}
-
-div.actions, .post-actions {
-    .discourse-no-touch & {
-      opacity: 0.2;
-      transition: opacity 0.7s ease-in-out;
-    }
-    .discourse-touch & {opacity: 1;}
+  .reply-to-tab {
+    z-index: 400;
+    font-size: 0.929em;
+    float: right;
+    margin: 1px 25px 0 0;
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
   }
 
-  &:hover div.actions, &:hover .post-actions {
+  .actions .fade-out {
+     .discourse-no-touch & {
+       opacity: 0.7;
+       transition: opacity 0.7s ease-in-out;
+     }
+     .discourse-touch & {opacity: 1;}
+  }
+
+  &:hover .actions .fade-out, .selected .actions .fade-out {
     opacity: 1;
-
   }
-
-  &:hover .gutter {
-      .reply-new,
-      .track-link {
-        opacity:1;
-      }
-    }
 }
 
 section.post-menu-area {
@@ -73,10 +52,25 @@ section.post-menu-area {
 }
 
 nav.post-controls {
+
+    .like-count {
+      font-size: inherit;
+      margin-right: -5px;
+    }
+
     padding: 0;
-    button {
-    color: scale-color($primary, $lightness: 60%);
+    .highlight-action {
+      color: dark-light-choose(scale-color($primary, $lightness: 60%), scale-color($secondary, $lightness: 40%));
+    }
+    a, button {
+    color: dark-light-choose(scale-color($primary, $lightness: 75%), scale-color($secondary, $lightness: 25%));
     margin-right: 2px;
+    display: inline-block;
+  }
+
+  a.toggle-likes {
+    padding: 8px 0;
+    margin-right: -3px;
   }
 
   span.badge-posts {
@@ -96,36 +90,23 @@ nav.post-controls {
   }
 
   .show-replies {
-    background: dark-light-diff($primary, $secondary, 90%, -65%);
-    padding: 8px 15px;
-    margin-left: 0;
-    span.badge-posts {color: scale-color($primary, $lightness: 60%);}
+    margin-left: -10px;
+    font-size: inherit;
+    span.badge-posts {color: dark-light-choose(scale-color($primary, $lightness: 60%), scale-color($secondary, $lightness: 40%)); }
     &:hover {
       background: dark-light-diff($primary, $secondary, 90%, -65%);
       span.badge-posts {color: $primary;}
     }
     i {
       margin-left: 5px;
+      font-size: 90%;
     }
   }
 
   button.create {
     margin-right: 0;
-    color: $tertiary;
-    background: dark-light-diff($tertiary, $secondary, 85%, -65%);
-    padding: 8px 20px;
+    color: dark-light-choose(scale-color($primary, $lightness: 20%), scale-color($secondary, $lightness: 80%));
     margin-left: 10px;
-
-    &:hover {  color: $secondary;
-      background: dark-light-diff($tertiary, $secondary, 0%, -20%)
-    }
-
-    &:active {
-      background: dark-light-diff($tertiary, $secondary, 50%, -35%);
-    box-shadow: inset 0 1px 3px rgba(0,0,0, .3);
-
-    }
-
   }
 
   .create i {
@@ -139,70 +120,71 @@ nav.post-controls {
     background: transparent;
     border: none;
     margin-left: 3px;
-    transition: all linear 0.15s;
 
-         &:hover {
-          background: scale-color-diff();
-          color: $primary;
-        }
+    &.d-hover {
+      background: dark-light-diff($primary, $secondary, 90%, -60%);
+      color: $primary;
+    }
 
-        &:active {
-            box-shadow: inset 0 1px 3px rgba(0,0,0, .4);
-        }
+    &:active {
+      box-shadow: inset 0 1px 3px rgba(0,0,0, .4);
+    }
 
-        &.hidden {
-          display: none;
-        }
-        &.admin {
-          position: relative;
-        }
+    &.hidden {
+      display: none;
+    }
+    &.admin {
+      position: relative;
+    }
 
-        &.delete:hover {
-          background: $danger;
-          color: $secondary;
-        }
+    &.delete.d-hover {
+      background: $danger;
+      color: $secondary;
+    }
 
-        &.like:hover {
-          color: $love;
-          background: dark-light-diff($love, $secondary, 85%, -60%)
-        }
+    &.like.d-hover {
+      color: $love;
+      background: dark-light-diff($love, $secondary, 85%, -60%)
+    }
 
-        &.has-like {color: $love;}
-        &.has-like[disabled]:hover {
-          background: transparent;
-        }
+    &.has-like {color: $love;}
+    &.has-like[disabled]:hover {
+      background: transparent;
+    }
+    &.has-like[disabled]:active {
+      box-shadow: none;
+    }
 
-        &.bookmark {padding: 8px 11px; }
+    &.bookmark {padding: 8px 11px; }
 
-        .read-icon {
-          &:before {
-            font-family: "FontAwesome";
-            content: "\f02e";
-          }
-          &.unseen {
-            &:before {
-              content: "\f097";
-            }
-          }
-          &.bookmarked {
-            &:before {
-              color: $tertiary;
-            }
-          }
+    .read-icon {
+      &:before {
+        font-family: "FontAwesome";
+        content: "\f02e";
+      }
+      &.unseen {
+        &:before {
+          content: "\f097";
         }
       }
+      &.bookmarked {
+        &:before {
+          color: $tertiary;
+        }
+      }
+    }
+  }
 
   .post-admin-menu {
     background-color: $secondary;
     width: 205px;
     padding: 10px;
-    border: 1px solid scale-color-diff();
+    border: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
     position: absolute;
     text-align: left;
     bottom: -2px;
     right: 15px;
     z-index: 1000;
-    display: none;
 
     h3 {
       margin-top: 0;
@@ -228,22 +210,26 @@ nav.post-controls {
 }
 
 .embedded-posts {
-  background: dark-light-diff($primary, $secondary, 90%, -65%) !important;
   h1, h2, h3 { margin: 10px 0; }
 
   .topic-body {
-    background: dark-light-diff($primary, $secondary, 90%, -65%) !important;
     box-sizing: border-box;
     width: calc(100% - 60px); // [100% - .topic-avatar width]
     // WARNING: overflow hide is required for quoted / embedded images
     // which expect "normal" post width, but expansions are narrower
     overflow: hidden;
-    padding: 10px 15px 15px 15px;
+    padding: 15px 15px 0 15px;
+  }
+
+  // this is covered by .topic-body .regular on a normal post
+  // but no such class structure exists for an embedded, expanded post
+  .cooked {
+    margin-top: 15px;
   }
 
   .topic-avatar {
     padding-left: 15px;
-    padding-top: 0;
+    padding-top: 15px;
   }
 
   // bottom means "reply expansion" below a post
@@ -254,7 +240,6 @@ nav.post-controls {
     }
   }
   &.bottom {
-    margin-top: -11px;
     .row {
       padding-top: 7px;
     }
@@ -266,21 +251,12 @@ nav.post-controls {
     width: 701px;
   }
   &.top.topic-body {
-    padding-left: 0;
-    padding-right: 0;
+    padding: 0;
   }
 
-  .post-date { color: scale-color($primary, $lightness: 50%); }
+  .post-date { color: dark-light-choose(scale-color($primary, $lightness: 60%), scale-color($secondary, $lightness: 40%)); }
   .fa-arrow-up, .fa-arrow-down { margin-left: 5px; }
-  .row {
-    border-top: 1px solid darken(scale-color-diff(), 10%);
-  }
   .reply:first-of-type .row { border-top: none; }
-
-  .quote .title, blockquote, .onebox, .onebox-result {
-    background: darken(scale-color-diff(), 5%);
-    border-left: 5px solid darken(scale-color-diff(), 12%);
-  }
 
   .topic-meta-data {
     position: relative;
@@ -291,10 +267,10 @@ nav.post-controls {
     font-size: 0.929em;
     a {
       font-weight: bold;
-      color: scale-color($primary, $lightness: 30%);
+      color: dark-light-choose(scale-color($primary, $lightness: 70%), scale-color($secondary, $lightness: 30%));
     }
   }
-  .arrow {color: scale-color($primary, $lightness: 50%);}
+  .arrow {color: dark-light-choose(scale-color($primary, $lightness: 60%), scale-color($secondary, $lightness: 40%)); }
 }
 
 .post-action {
@@ -311,7 +287,7 @@ a.star {
 
 .topic-map {
   margin: 20px 0 0 0;
-  background: dark-light-diff($primary, $secondary, 97%, -45%);
+  background: blend-primary-secondary(5%);
   border: 1px solid dark-light-diff($primary, $secondary, 90%, -65%);
   border-top: none; // would cause double top border
 
@@ -321,7 +297,7 @@ a.star {
 
   h3 {
     margin-bottom: 4px;
-    color: scale-color($primary, $lightness: 20%);
+    color: dark-light-choose(scale-color($primary, $lightness: 20%), scale-color($secondary, $lightness: 80%));
     line-height: 23px;
     font-weight: normal;
     font-size: 1em;
@@ -329,7 +305,7 @@ a.star {
 
   h4 {
     margin: 1px 0 2px 0;
-    color: scale-color($primary, $lightness: 50%);
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
     font-weight: normal;
     font-size: 0.857em;
     line-height: 15px;
@@ -342,7 +318,7 @@ a.star {
 
   span.domain {
     font-size: 0.714em;
-    color: scale-color($primary, $lightness: 50%);
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
   }
 
   .avatars {
@@ -353,7 +329,7 @@ a.star {
     }
     .post-count {
       position: absolute;
-      right: 3px;
+      right: 0;
       border-radius: 100px;
       padding: 4px 5px 2px 5px;
       text-align: center;
@@ -382,7 +358,7 @@ a.star {
       line-height: 20px;
     }
     .number, i {
-      color: scale-color($primary, $lightness: 20%);
+      color: dark-light-choose(scale-color($primary, $lightness: 20%), scale-color($secondary, $lightness: 80%));
       font-size: 130%;
     }
     .avatar  a {
@@ -397,7 +373,15 @@ a.star {
   }
 
   .participants { // PMs //
-    .user {float: left; margin: 7px 20px 7px 0;}
+    .user { float: left; margin: 7px 20px 7px 0; }
+    .user a {
+      color: dark-light-choose(scale-color($primary, $lightness: 30%), scale-color($secondary, $lightness: 70%));
+      font-weight: bold;
+      font-size: 0.929em;
+    }
+    i.fa-times {
+      color: dark-light-choose(scale-color($primary, $lightness: 60%), scale-color($secondary, $lightness: 40%));
+    }
   }
 
   .topic-links {
@@ -416,13 +400,13 @@ a.star {
     .btn {
       border: 0;
       padding: 0 23px;
-      color: $primary;
-      background: dark-light-diff($primary, $secondary, 97%, -45%);
+      color: dark-light-choose(scale-color($primary, $lightness: 60%), scale-color($secondary, $lightness: 40%));
+      background: blend-primary-secondary(5%);
       border-left: 1px solid dark-light-diff($primary, $secondary, 90%, -65%);
       border-top: 1px solid dark-light-diff($primary, $secondary, 90%, -65%);
       &:hover {
         color: $primary;
-        background: dark-light-diff($primary, $secondary, 90%, -65%);
+        background: dark-light-diff($primary, $secondary, 90%, -80%);
       }
 
       &.collapsed {
@@ -441,14 +425,25 @@ a.star {
   padding: 10px 10px 0 0;
   p {
     line-height: 32px;
-    color: $primary;
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
   }
   .btn {
-    outline: 0;
     margin-bottom: 5px;
     margin-right: 10px;
     .fa-bookmark.bookmarked { color: $tertiary; }
   }
+
+  .bookmark.bookmarked .fa-bookmark {
+    color: $tertiary;
+  }
+
+  .notification-options p {
+    display: inline-block;
+  }
+}
+
+#topic-footer-button {
+  width: 757px;
 }
 
 #suggested-topics {
@@ -510,13 +505,13 @@ video {
 .extra-info-wrapper {
   overflow: hidden;
 
-  .star, .badge-wrapper, i,  .topic-link:not(.loading) {
+  .badge-wrapper, i, .topic-link {
     -webkit-animation: fadein .7s;
     animation: fadein .7s;
   }
 
   .topic-statuses {
-    i  { color: $header_primary; }
+    i { color: $header_primary; }
     i.fa-envelope { color: $danger; }
     .unpinned { color: $header_primary; }
   }
@@ -527,6 +522,11 @@ video {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .topic-header-extra {
+    margin: 0 0 0 5px;
+    padding-top: 5px;
   }
 }
 
@@ -565,13 +565,6 @@ video {
   position: relative;
 }
 
-a.mention {
-  padding: 2px 4px;
-  color: $primary;
-  background: scale-color-diff();
-}
-
-
 .moderator {
   .topic-body {
     background-color: dark-light-diff($highlight, $secondary, 70%, -80%);
@@ -593,17 +586,6 @@ a.mention {
   float: right;
   margin-right: 20px;
   margin-top: -20px;
-}
-
-#show-topic-admin {
-  right: 20px;
-  padding: 5px 8px;
-  margin-top: 5px;
-
-}
-
-.topic-admin-menu {
-  h3 {margin-top: 0;}
 }
 
 .deleted-user-avatar {
@@ -628,13 +610,13 @@ blockquote {
 .quote {
   &>blockquote {
     .onebox-result {
-      background-color: dark-light-diff($primary, $secondary, 97%, -45%);
+      background-color: blend-primary-secondary(5%);
     }
   }
 
   aside {
     .quote, .title, blockquote, .onebox, .onebox-result {
-      background: dark-light-diff($primary, $secondary, 97%, -45%);
+      background: blend-primary-secondary(5%);
       border-left: 5px solid dark-light-diff($primary, $secondary, 90%, -65%);
     }
 
@@ -645,55 +627,11 @@ blockquote {
 
 }
 
-
-
-.gutter {
-  margin-top: 13px;
-  width: 100%;
-  box-sizing: border-box;
-  z-index: 1;
-  padding-left: 757px;
-
-  ul {margin: 0;}
-  li {margin-bottom: 10px;}
-  i {font-size: 0.857em;}
-
-  .reply-new {
-    padding-left: 27px;
-    display:block;
-    overflow:hidden;
-  }
-
-  .track-link {
-    padding-left: 10px;
-    display: block;
-    overflow: hidden;
-    }
-
-  .post-links {
-    list-style-type: none;
-    position: relative;
-    line-height: 18px;
-    word-wrap: break-word;
-    a i {
-      position: relative;
-      margin-right: 7px;
-      margin-top: -2px;
-      margin-left: -17px;
-    }
-
-    a.toggle-more {
-      display: block;
-      text-align: right;
-    }
-
-  }
-}
-
 // variables are used to calculate the width of .gap
 $topic-body-width: 690px;
 $topic-body-width-padding: 11px;
 $topic-avatar-width: 45px;
+
 .topic-body {
   width: $topic-body-width;
   float: left;
@@ -701,30 +639,38 @@ $topic-avatar-width: 45px;
   z-index: 2;
   border-top: 1px solid dark-light-diff($primary, $secondary, 90%, -75%);
   padding: 12px $topic-body-width-padding 15px $topic-body-width-padding;
-  &.highlighted {
-    background-color: dark-light-diff($tertiary, $secondary, 85%, -65%);
-  }
 }
+
 .topic-avatar {
   border-top: 1px solid dark-light-diff($primary, $secondary, 90%, -75%);
   padding-top: 15px;
   width: $topic-avatar-width;
   float: left;
-  position: relative;
-  z-index: 2;
+  z-index: 3;
 }
 
 .gap {
-  background-color: scale-color-diff();
-  padding: 5px 0;
-  color: lighten($primary, 30%);
-  cursor: pointer;
-  text-align: center;
   width: calc(#{$topic-avatar-width} + #{$topic-body-width} + 2 * #{$topic-body-width-padding});
+}
+
+.small-action {
+  max-width: 755px;
+  border-top: 1px solid dark-light-diff($primary, $secondary, 90%, -75%);
+}
+
+.small-action.deleted {
+  background-color: dark-light-diff(rgba($danger,.7), $secondary, 50%, -60%);
+}
+
+/* hide the reply border above the time gap notices */
+.time-gap + .topic-post .topic-body,
+.time-gap + .topic-post .topic-avatar {
+  border-top: none;
 }
 
 .posts-wrapper {
   position: relative;
+  -webkit-font-smoothing: subpixel-antialiased;
 }
 
 .dropdown {
@@ -745,18 +691,26 @@ $topic-avatar-width: 45px;
   position: absolute;
   bottom: 115%;
   left: 0;
-  z-index: 1000;
+  z-index: 999;
   display: none;
   float: left;
   width: 550px;
   margin: 1px 0 0;
   list-style: none;
   background-color: $secondary;
-  border: 1px solid scale-color-diff();
+  border: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
   box-shadow: 0 1px 5px rgba(0,0,0, .4);
   background-clip: padding-box;
-  span {font-size: 0.857em;}
-  .title {font-weight: bold; display: block; font-size: 1em;}
+  span {
+    font-size: 0.857em;
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
+  }
+  span.title {
+    font-weight: bold;
+    display: block;
+    font-size: 1em;
+    color: $primary;
+  }
 }
 .dropdown-menu a {
   display: block;
@@ -799,18 +753,21 @@ $topic-avatar-width: 45px;
   clear: both;
 }
 
-#selected-posts {
-
-  padding-left: 20px;
-  margin-left: 330px;
+.selected-posts {
   width: 200px;
   position: fixed;
   z-index: 1000;
-  left: 50%;
   background-color: dark-light-diff($tertiary, $secondary, 85%, -65%);
   border: 1px solid $tertiary;
   padding: 5px;
   margin-bottom: 5px;
+  right: 10px;
+
+  @include large-width {
+    right: auto;
+    margin-left: 330px;
+    left: 50%;
+  }
 
   button {
     width: 180px;
@@ -867,6 +824,7 @@ $topic-avatar-width: 45px;
     }
   }
 }
+
 .topic-post {
   &.selected {
     article.boxed {
@@ -888,17 +846,15 @@ $topic-avatar-width: 45px;
 
     .select-posts {
       position: absolute;
-      left: 100%;
+      right: 0;
       z-index: 490;
-      top: 8px;
-      width: 800px;
+      top: 3em;
       height: 100px;
-      background-color: $secondary;
 
       button {
         margin-left: 8px;
-        background-color: scale-color($primary, $lightness: 70%);
-        border: 1px solid scale-color($primary, $lightness: 60%);
+        background-color: dark-light-choose(scale-color($primary, $lightness: 70%), scale-color($secondary, $lightness: 30%));
+        border: 1px solid dark-light-choose(scale-color($primary, $lightness: 60%), scale-color($secondary, $lightness: 40%));
         color: $primary;
       }
     }
@@ -913,17 +869,17 @@ a.attachment:before {
 }
 
 .private_message .gutter, .deleted-topic .gutter,.read_restricted .gutter {
-    position: relative;
+  position: relative;
 }
 
 .deleted-topic .gutter:before {
-    display: block;
-    position: absolute;
-    left: 767px;
-    color: rgba(dark-light-diff($primary, $secondary, 90%, -65%) , .8);
-    font: 6.429em/1 FontAwesome;
-    content: "\f014";
-    z-index: -5;
+  display: block;
+  position: absolute;
+  left: 767px;
+  color: rgba(dark-light-diff($primary, $secondary, 90%, -65%) , .8);
+  font: 6.429em/1 FontAwesome;
+  content: "\f014";
+  z-index: -5;
 }
 
 .topic-meta-data {
@@ -942,9 +898,16 @@ a.attachment:before {
    float: right;
    font-size: 0.929em;
    margin-top: 1px;
-   a {color: scale-color($primary, $lightness: 50%);}
+   a {color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%)); }
  }
 
+}
+
+.who-liked {
+  margin-top: 20px;
+  margin-bottom: 0px;
+  width: 100%;
+  text-align: right;
 }
 
 span.highlighted {
@@ -952,13 +915,13 @@ span.highlighted {
 }
 
 .username.new-user a {
-  color: scale-color($primary, $lightness: 70%);
+  color: dark-light-choose(scale-color($primary, $lightness: 70%), scale-color($secondary, $lightness: 30%));
 }
 
 .read-state {
   color: scale-color($tertiary, $lightness: 50%);
   position: absolute;
-  right: -2px;
+  right: 0px;
   top: 13px;
   font-size: 0.571em;
 }
@@ -968,6 +931,13 @@ span.highlighted {
   transition: opacity ease-out 1s;
 }
 
+.signup-cta {
+  width: $topic-body-width;
+  a {
+    float: right;
+    text-decoration: underline;
+  }
+}
 
 /* Tablet (portrait) ----------- */
 
@@ -977,15 +947,15 @@ and (max-width : 870px) {
 
   .gutter {
     display: none;
-    }
+  }
 
   .topic-avatar {
     width: 45px;
   }
 
-  .post-cloak .reply-to-tab {
+  .topic-post .reply-to-tab {
       right: 15%;
-    }
+  }
 
   .topic-body {
       box-sizing: border-box;
@@ -1002,6 +972,8 @@ and (max-width : 870px) {
   }
 
 }
+
+
 
 /* below standard tablet portrait ----------- */
 

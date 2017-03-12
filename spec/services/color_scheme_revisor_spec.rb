@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe ColorSchemeRevisor do
 
@@ -16,6 +16,11 @@ describe ColorSchemeRevisor do
     it "can change the name" do
       described_class.revise(color_scheme, valid_params.merge(name: "Changed Name"))
       expect(color_scheme.reload.name).to eq("Changed Name")
+    end
+
+    it "can update the theme_id" do
+      described_class.revise(color_scheme, valid_params.merge(theme_id: 'test'))
+      expect(color_scheme.reload.theme_id).to eq('test')
     end
 
     it "can enable and disable" do

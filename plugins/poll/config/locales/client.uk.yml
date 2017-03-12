@@ -8,9 +8,31 @@
 uk:
   js:
     poll:
-      voters:
-        zero: "проголосувало"
-        one: "проголосував"
-        other: "проголосувало"
       total_votes:
-        zero: "кількість голосів"
+        one: "голос"
+        few: "голосів"
+        other: "голоси"
+      average_rating: "Середній рейтинг: <strong>%{average}</strong>."
+      multiple:
+        help:
+          at_least_min_options:
+            one: "Виберіть хоча б <strong>1</strong> варіант"
+            few: "Виберіть хоча б <strong>%{count}</strong> варіантів"
+            other: "Виберіть хоча б <strong>%{count}</strong> варіанти"
+      cast-votes:
+        label: "Проголосувати!"
+      show-results:
+        label: "Показати результати"
+      hide-results:
+        label: "Приховати результати"
+      open:
+        label: "Відкрити"
+      close:
+        label: "Закрити"
+      ui_builder:
+        poll_type:
+          label: Тип
+        poll_config:
+          max: Макс
+          min: Мін
+          step: Крок

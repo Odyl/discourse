@@ -1,7 +1,6 @@
-import { applyFlaggedProperties } from 'discourse/controllers/header';
+import { applyFlaggedProperties } from 'discourse/components/site-header';
 
 export default {
   name: 'apply-flagged-properties',
-  after: 'register-discourse-location',
   initialize: applyFlaggedProperties
 };

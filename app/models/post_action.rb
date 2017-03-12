@@ -22,6 +22,9 @@ class PostAction < ActiveRecord::Base
 
   after_save :update_counters
   after_save :enforce_rules
+  after_save :create_user_action
+  after_save :update_notifications
+  after_create :create_notifications
   after_commit :notify_subscribers
 
   def disposed_by_id
@@ -39,11 +42,13 @@ class PostAction < ActiveRecord::Base
     nil
   end
 
-  def self.flag_count_by_date(start_date, end_date)
-    where('created_at >= ? and created_at <= ?', start_date, end_date)
-      .where(post_action_type_id: PostActionType.flag_types.values)
-      .group('date(created_at)').order('date(created_at)')
-      .count
+  def self.flag_count_by_date(start_date, end_date, category_id=nil)
+    result = where('post_actions.created_at >= ? AND post_actions.created_at <= ?', start_date, end_date)
+    result = result.where(post_action_type_id: PostActionType.flag_types.values)
+    result = result.joins(post: :topic).where("topics.category_id = ?", category_id) if category_id
+    result.group('date(post_actions.created_at)')
+          .order('date(post_actions.created_at)')
+          .count
   end
 
   def self.update_flagged_posts_count
@@ -64,7 +69,7 @@ class PostAction < ActiveRecord::Base
   end
 
   def self.counts_for(collection, user)
-    return {} if collection.blank?
+    return {} if collection.blank? || !user
 
     collection_ids = collection.map(&:id)
     user_id = user.try(:id) || 0
@@ -122,12 +127,15 @@ SQL
     user_actions
   end
 
-  def self.count_per_day_for_type(post_action_type, since_days_ago=30)
-    unscoped.where(post_action_type_id: post_action_type)
-            .where('created_at >= ?', since_days_ago.days.ago)
-            .group('date(created_at)')
-            .order('date(created_at)')
-            .count
+  def self.count_per_day_for_type(post_action_type, opts=nil)
+    opts ||= {}
+    result = unscoped.where(post_action_type_id: post_action_type)
+    result = result.where('post_actions.created_at >= ?', opts[:start_date] || (opts[:since_days_ago] || 30).days.ago)
+    result = result.where('post_actions.created_at <= ?', opts[:end_date]) if opts[:end_date]
+    result = result.joins(post: :topic).where('topics.category_id = ?', opts[:category_id]) if opts[:category_id]
+    result.group('date(post_actions.created_at)')
+          .order('date(post_actions.created_at)')
+          .count
   end
 
   def self.agree_flags!(post, moderator, delete_post=false)
@@ -142,10 +150,10 @@ SQL
       # so callback is called
       action.save
       action.add_moderator_post_if_needed(moderator, :agreed, delete_post)
-      @trigger_spam = true if action.post_action_type_id == PostActionType.types[:spam]
+      trigger_spam = true if action.post_action_type_id == PostActionType.types[:spam]
     end
 
-    DiscourseEvent.trigger(:confirmed_spam_post, post) if @trigger_spam
+    DiscourseEvent.trigger(:confirmed_spam_post, post) if trigger_spam
 
     update_flagged_posts_count
   end
@@ -200,7 +208,7 @@ SQL
   end
 
   def staff_already_replied?(topic)
-    topic.posts.where("user_id IN (SELECT id FROM users WHERE moderator OR admin) OR post_type = :post_type", post_type: Post.types[:moderator_action]).exists?
+    topic.posts.where("user_id IN (SELECT id FROM users WHERE moderator OR admin) OR (post_type != :regular_post_type)", regular_post_type: Post.types[:regular]).exists?
   end
 
   def self.create_message_for_post_action(user, post, post_action_type_id, opts)
@@ -208,20 +216,21 @@ SQL
 
     return unless opts[:message] && [:notify_moderators, :notify_user, :spam].include?(post_action_type)
 
-    title = I18n.t("post_action_types.#{post_action_type}.email_title", title: post.topic.title)
-    body = I18n.t("post_action_types.#{post_action_type}.email_body", message: opts[:message], link: "#{Discourse.base_url}#{post.url}")
-
+    title = I18n.t("post_action_types.#{post_action_type}.email_title", title: post.topic.title, locale: SiteSetting.default_locale)
+    body = I18n.t("post_action_types.#{post_action_type}.email_body", message: opts[:message], link: "#{Discourse.base_url}#{post.url}", locale: SiteSetting.default_locale)
+    warning = opts[:is_warning] if opts[:is_warning].present?
     title = title.truncate(255, separator: /\s/)
 
     opts = {
       archetype: Archetype.private_message,
+      is_warning: warning,
       title: title,
       raw: body
     }
 
     if [:notify_moderators, :spam].include?(post_action_type)
       opts[:subtype] = TopicSubtype.notify_moderators
-      opts[:target_group_names] = "moderators"
+      opts[:target_group_names] = target_moderators
     else
       opts[:subtype] = TopicSubtype.notify_user
       opts[:target_usernames] = if post_action_type == :notify_user
@@ -233,10 +242,17 @@ SQL
                                 end
     end
 
-    PostCreator.new(user, opts).create.id
+    PostCreator.new(user, opts).create.try(:id)
+  end
+
+  def self.limit_action!(user,post,post_action_type_id)
+    RateLimiter.new(user, "post_action-#{post.id}_#{post_action_type_id}", 4, 1.minute).performed!
   end
 
   def self.act(user, post, post_action_type_id, opts = {})
+
+    limit_action!(user,post,post_action_type_id)
+
     related_post_id = create_message_for_post_action(user, post, post_action_type_id, opts)
     staff_took_action = opts[:take_action] || false
 
@@ -267,17 +283,20 @@ SQL
       post_action.recover!
       action_attrs.each { |attr, val| post_action.send("#{attr}=", val) }
       post_action.save
+      PostActionNotifier.post_action_created(post_action)
     else
       post_action = create(where_attrs.merge(action_attrs))
       if post_action && post_action.errors.count == 0
         BadgeGranter.queue_badge_grant(Badge::Trigger::PostAction, post_action: post_action)
       end
     end
+    GivenDailyLike.increment_for(user.id)
 
     # agree with other flags
-    PostAction.agree_flags!(post, user) if staff_took_action
-    # update counters
-    post_action.try(:update_counters)
+    if staff_took_action
+      PostAction.agree_flags!(post, user)
+      post_action.try(:update_counters)
+    end
 
     post_action
   rescue ActiveRecord::RecordNotUnique
@@ -287,11 +306,15 @@ SQL
   end
 
   def self.remove_act(user, post, post_action_type_id)
+
+    limit_action!(user,post,post_action_type_id)
+
     finder = PostAction.where(post_id: post.id, user_id: user.id, post_action_type_id: post_action_type_id)
     finder = finder.with_deleted.includes(:post) if user.try(:staff?)
     if action = finder.first
       action.remove_act!(user)
       action.post.unhide! if action.staff_took_action
+      GivenDailyLike.decrement_for(user.id)
     end
   end
 
@@ -415,8 +438,10 @@ SQL
                                          post_action_type: post_action_type_key)
     end
 
-    topic_count = Post.where(topic_id: topic_id).sum(column)
-    Topic.where(id: topic_id).update_all ["#{column} = ?", topic_count]
+    if column == "like_count"
+      topic_count = Post.where(topic_id: topic_id).sum(column)
+      Topic.where(id: topic_id).update_all ["#{column} = ?", topic_count]
+    end
 
     if PostActionType.notify_flag_type_ids.include?(post_action_type_id)
       PostAction.update_flagged_posts_count
@@ -428,7 +453,23 @@ SQL
     post = Post.with_deleted.where(id: post_id).first
     PostAction.auto_close_if_threshold_reached(post.topic)
     PostAction.auto_hide_if_needed(user, post, post_action_type_key)
-    SpamRulesEnforcer.enforce!(post.user) if post_action_type_key == :spam
+    SpamRulesEnforcer.enforce!(post.user)
+  end
+
+  def create_user_action
+    if is_bookmark? || is_like?
+      UserActionCreator.log_post_action(self)
+    end
+  end
+
+  def update_notifications
+    if self.deleted_at.present?
+      PostActionNotifier.post_action_deleted(self)
+    end
+  end
+
+  def create_notifications
+    PostActionNotifier.post_action_created(self)
   end
 
   def notify_subscribers
@@ -457,7 +498,7 @@ SQL
 
     # the threshold has been reached, we will close the topic waiting for intervention
     message = I18n.t("temporarily_closed_due_to_flags")
-    topic.update_status("closed", true, Discourse.system_user, message)
+    topic.update_status("closed", true, Discourse.system_user, message: message)
   end
 
   def self.auto_hide_if_needed(acting_user, post, post_action_type)
@@ -472,10 +513,10 @@ SQL
     elsif PostActionType.auto_action_flag_types.include?(post_action_type) &&
           SiteSetting.flags_required_to_hide_post > 0
 
-      old_flags, new_flags = PostAction.flag_counts_for(post.id)
+      _old_flags, new_flags = PostAction.flag_counts_for(post.id)
 
       if new_flags >= SiteSetting.flags_required_to_hide_post
-        hide_post!(post, post_action_type, guess_hide_reason(old_flags))
+        hide_post!(post, post_action_type, guess_hide_reason(post))
       end
     end
   end
@@ -484,11 +525,14 @@ SQL
     return if post.hidden
 
     unless reason
-      old_flags,_ = PostAction.flag_counts_for(post.id)
-      reason = guess_hide_reason(old_flags)
+      reason = guess_hide_reason(post)
     end
 
-    Post.where(id: post.id).update_all(["hidden = true, hidden_at = ?, hidden_reason_id = COALESCE(hidden_reason_id, ?)", Time.now, reason])
+    post.hidden = true
+    post.hidden_at = Time.zone.now
+    post.hidden_reason_id = reason
+    post.save
+
     Topic.where("id = :topic_id AND NOT EXISTS(SELECT 1 FROM POSTS WHERE topic_id = :topic_id AND NOT hidden)", topic_id: post.topic_id).update_all(visible: false)
 
     # inform user
@@ -502,8 +546,8 @@ SQL
     end
   end
 
-  def self.guess_hide_reason(old_flags)
-    old_flags > 0 ?
+  def self.guess_hide_reason(post)
+    post.hidden_at ?
       Post.hidden_reasons[:flag_threshold_reached_again] :
       Post.hidden_reasons[:flag_threshold_reached]
   end
@@ -543,7 +587,8 @@ end
 #
 # Indexes
 #
-#  idx_unique_actions             (user_id,post_action_type_id,post_id,targets_topic) UNIQUE
-#  idx_unique_flags               (user_id,post_id,targets_topic) UNIQUE
-#  index_post_actions_on_post_id  (post_id)
+#  idx_unique_actions                                     (user_id,post_action_type_id,post_id,targets_topic) UNIQUE
+#  idx_unique_flags                                       (user_id,post_id,targets_topic) UNIQUE
+#  index_post_actions_on_post_id                          (post_id)
+#  index_post_actions_on_user_id_and_post_action_type_id  (user_id,post_action_type_id)
 #

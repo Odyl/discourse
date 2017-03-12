@@ -1,19 +1,28 @@
-export default Ember.ObjectController.extend({
-  saving: false,
+import { popupAjaxError } from 'discourse/lib/ajax-error';
+import { bufferedProperty } from 'discourse/mixins/buffered-content';
+
+export default Ember.Controller.extend(bufferedProperty('siteText'), {
   saved: false,
 
-  saveDisabled: function() {
-    if (this.get('saving')) { return true; }
-    if ((!this.get('allow_blank')) && Ember.isEmpty(this.get('value'))) { return true; }
-    return false;
-  }.property('saving', 'value'),
-
   actions: {
-    saveChanges: function() {
-      var self = this;
-      self.setProperties({saving: true, saved: false});
-      self.get('model').save().then(function () {
-        self.setProperties({saving: false, saved: true});
+    saveChanges() {
+      const buffered = this.get('buffered');
+      this.get('siteText').save(buffered.getProperties('value')).then(() => {
+        this.commitBuffer();
+        this.set('saved', true);
+      }).catch(popupAjaxError);
+    },
+
+    revertChanges() {
+      this.set('saved', false);
+      bootbox.confirm(I18n.t('admin.site_text.revert_confirm'), result => {
+        if (result) {
+          this.get('siteText').revert().then(props => {
+            const buffered = this.get('buffered');
+            buffered.setProperties(props);
+            this.commitBuffer();
+          }).catch(popupAjaxError);
+        }
       });
     }
   }

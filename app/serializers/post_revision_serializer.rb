@@ -22,7 +22,10 @@ class PostRevisionSerializer < ApplicationSerializer
              :edit_reason,
              :body_changes,
              :title_changes,
-             :user_changes
+             :user_changes,
+             :tags_changes,
+             :wiki,
+             :can_edit
 
 
   # Creates a field called field_name_changes with previous and
@@ -94,6 +97,14 @@ class PostRevisionSerializer < ApplicationSerializer
     user.avatar_template
   end
 
+  def wiki
+    object.post.wiki
+  end
+
+  def can_edit
+    scope.can_edit?(object.post)
+  end
+
   def edit_reason
     # only show 'edit_reason' when revisions are consecutive
     current["edit_reason"] if scope.can_view_hidden_post_revisions? ||
@@ -149,6 +160,14 @@ class PostRevisionSerializer < ApplicationSerializer
     }
   end
 
+  def tags_changes
+    { previous: previous["tags"], current: current["tags"] }
+  end
+
+  def include_tags_changes?
+    SiteSetting.tagging_enabled && previous["tags"] != current["tags"]
+  end
+
   protected
 
     def post
@@ -182,6 +201,14 @@ class PostRevisionSerializer < ApplicationSerializer
         if topic.respond_to?(field)
           latest_modifications[field.to_s] = [topic.send(field)]
         end
+      end
+
+      if SiteSetting.topic_featured_link_enabled
+        latest_modifications["featured_link"] = [post.topic.featured_link]
+      end
+
+      if SiteSetting.tagging_enabled
+        latest_modifications["tags"] = [post.topic.tags.map(&:name)]
       end
 
       post_revisions << PostRevision.new(

@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'topic_view'
 
 describe TopicView do
@@ -13,6 +13,7 @@ describe TopicView do
     expect { TopicView.new(1231232, coding_horror) }.to raise_error(Discourse::NotFound)
   end
 
+  # see also spec/controllers/topics_controller_spec.rb TopicsController::show::permission errors
   it "raises an error if the user can't see the topic" do
     Guardian.any_instance.expects(:can_see?).with(topic).returns(false)
     expect { topic_view }.to raise_error(Discourse::InvalidAccess)
@@ -21,7 +22,7 @@ describe TopicView do
   it "handles deleted topics" do
     admin = Fabricate(:admin)
     topic.trash!(admin)
-    expect { TopicView.new(topic.id, Fabricate(:user)) }.to raise_error(Discourse::NotFound)
+    expect { TopicView.new(topic.id, Fabricate(:user)) }.to raise_error(Discourse::InvalidAccess)
     expect { TopicView.new(topic.id, admin) }.not_to raise_error
   end
 
@@ -34,6 +35,11 @@ describe TopicView do
       tv = TopicView.new(topic.id, coding_horror, slow_platform: true)
       expect(tv.chunk_size).to eq(TopicView.slow_chunk_size)
     end
+
+    it "returns `print_chunk_size` when print param is true" do
+      tv = TopicView.new(topic.id, coding_horror, print: true)
+      expect(tv.chunk_size).to eq(TopicView.print_chunk_size)
+    end
   end
 
   context "with a few sample posts" do
@@ -42,8 +48,8 @@ describe TopicView do
     let!(:p3) { Fabricate(:post, topic: topic, user: first_poster, percent_rank: 0 )}
 
     let(:moderator) { Fabricate(:moderator) }
-    let(:admin) { Fabricate(:admin)
-    }
+    let(:admin) { Fabricate(:admin) }
+
     it "it can find the best responses" do
 
       best2 = TopicView.new(topic.id, coding_horror, best: 2)
@@ -251,6 +257,23 @@ describe TopicView do
 
   end
 
+  context 'whispers' do
+    it "handles their visibility properly" do
+      p1 = Fabricate(:post, topic: topic, user: coding_horror)
+      p2 = Fabricate(:post, topic: topic, user: coding_horror, post_type: Post.types[:whisper])
+      p3 = Fabricate(:post, topic: topic, user: coding_horror)
+
+      ch_posts = TopicView.new(topic.id, coding_horror).posts
+      expect(ch_posts.map(&:id)).to eq([p1.id, p2.id, p3.id])
+
+      anon_posts = TopicView.new(topic.id).posts
+      expect(anon_posts.map(&:id)).to eq([p1.id, p3.id])
+
+      admin_posts = TopicView.new(topic.id, Fabricate(:moderator)).posts
+      expect(admin_posts.map(&:id)).to eq([p1.id, p2.id, p3.id])
+    end
+  end
+
   context '.posts' do
 
     # Create the posts in a different order than the sort_order
@@ -401,6 +424,74 @@ describe TopicView do
           near_view = topic_view_near(p5, true)
           expect(near_view.posts).to eq([p1, p2, p3, p4, p5, p6, p7])
           expect(near_view.contains_gaps?).to eq(false)
+        end
+      end
+    end
+  end
+
+  context "page_title" do
+    let(:tag1) { Fabricate(:tag) }
+    let(:tag2) { Fabricate(:tag, topic_count: 2) }
+
+    subject { TopicView.new(topic.id, coding_horror).page_title }
+
+    context "uncategorized topic" do
+      context "topic_page_title_includes_category is false" do
+        before { SiteSetting.topic_page_title_includes_category = false }
+        it { should eq(topic.title) }
+      end
+
+      context "topic_page_title_includes_category is true" do
+        before { SiteSetting.topic_page_title_includes_category = true }
+        it { should eq(topic.title) }
+
+        context "tagged topic" do
+          before { topic.tags << [tag1, tag2] }
+
+          context "tagging enabled" do
+            before { SiteSetting.tagging_enabled = true }
+
+            it { should start_with(topic.title) }
+            it { should_not include(tag1.name) }
+            it { should end_with(tag2.name) } # tag2 has higher topic count
+          end
+
+          context "tagging disabled" do
+            before { SiteSetting.tagging_enabled = false }
+
+            it { should start_with(topic.title) }
+            it { should_not include(tag1.name) }
+            it { should_not include(tag2.name) }
+          end
+        end
+      end
+    end
+
+    context "categorized topic" do
+      let(:category) { Fabricate(:category) }
+
+      before { topic.update_attributes(category_id: category.id) }
+
+      context "topic_page_title_includes_category is false" do
+        before { SiteSetting.topic_page_title_includes_category = false }
+        it { should eq(topic.title) }
+      end
+
+      context "topic_page_title_includes_category is true" do
+        before { SiteSetting.topic_page_title_includes_category = true }
+        it { should start_with(topic.title) }
+        it { should end_with(category.name) }
+
+        context "tagged topic" do
+          before do
+            SiteSetting.tagging_enabled = true
+            topic.tags << [tag1, tag2]
+          end
+
+          it { should start_with(topic.title) }
+          it { should end_with(category.name) }
+          it { should_not include(tag1.name) }
+          it { should_not include(tag2.name) }
         end
       end
     end

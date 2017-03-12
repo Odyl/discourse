@@ -1,12 +1,21 @@
 class UserProfile < ActiveRecord::Base
   belongs_to :user, inverse_of: :user_profile
 
+  WEBSITE_REGEXP = /(^$)|(^(http|https):\/\/[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,10}(([0-9]{1,5})?\/.*)?$)/ix
+
   validates :bio_raw, length: { maximum: 3000 }
+  validates :website, format: { with: WEBSITE_REGEXP }, allow_blank: true, if: Proc.new { |c| c.new_record? || c.website_changed? }
   validates :user, presence: true
   before_save :cook
   after_save :trigger_badges
 
+  validates :profile_background, upload_url: true, if: :profile_background_changed?
+  validates :card_background, upload_url: true, if: :card_background_changed?
+
+  validate :website_domain_validator, if: Proc.new { |c| c.new_record? || c.website_changed? }
+
   belongs_to :card_image_badge, class_name: 'Badge'
+  has_many :user_profile_views, dependent: :destroy
 
   BAKED_VERSION = 1
 
@@ -95,6 +104,14 @@ class UserProfile < ActiveRecord::Base
     end
   end
 
+  def website_domain_validator
+    allowed_domains = SiteSetting.user_website_domains_whitelist
+    return if (allowed_domains.blank? || self.website.blank?)
+
+    domain = URI.parse(self.website).host
+    self.errors.add :base, (I18n.t('user.website.domain_not_allowed', domains: allowed_domains.split('|').join(", "))) unless allowed_domains.split('|').include?(domain)
+  end
+
 end
 
 # == Schema Information
@@ -102,8 +119,8 @@ end
 # Table name: user_profiles
 #
 #  user_id              :integer          not null, primary key
-#  location             :string(255)
-#  website              :string(255)
+#  location             :string
+#  website              :string
 #  bio_raw              :text
 #  bio_cooked           :text
 #  profile_background   :string(255)
@@ -112,8 +129,11 @@ end
 #  badge_granted_title  :boolean          default(FALSE)
 #  card_background      :string(255)
 #  card_image_badge_id  :integer
+#  views                :integer          default(0), not null
 #
 # Indexes
 #
 #  index_user_profiles_on_bio_cooked_version  (bio_cooked_version)
+#  index_user_profiles_on_card_background     (card_background)
+#  index_user_profiles_on_profile_background  (profile_background)
 #

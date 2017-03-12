@@ -1,6 +1,9 @@
 require_dependency 'has_errors'
 
 class TopicCreator
+
+  attr_reader :user, :guardian, :opts
+
   include HasErrors
 
   def self.create(user, guardian, opts)
@@ -16,11 +19,29 @@ class TopicCreator
 
   def valid?
     topic = Topic.new(setup_topic_params)
-    validate_child(topic)
+    # validate? will clear the error hash
+    # so we fire the validation event after
+    # this allows us to add errors
+    valid = topic.valid?
+
+    # not sure where this should go
+    if !@guardian.is_staff? && staff_only = DiscourseTagging.staff_only_tags(@opts[:tags])
+      topic.errors[:base] << I18n.t("tags.staff_tag_disallowed", tag: staff_only.join(" "))
+    end
+
+    DiscourseEvent.trigger(:after_validate_topic, topic, self)
+    valid &&= topic.errors.empty?
+
+    add_errors_from(topic) unless valid
+
+    valid
   end
 
   def create
     topic = Topic.new(setup_topic_params)
+    setup_tags(topic)
+
+    DiscourseEvent.trigger(:before_create_topic, topic, self)
 
     setup_auto_close_time(topic)
     process_private_message(topic)
@@ -51,26 +72,42 @@ class TopicCreator
       topic.notifier.watch_topic!(topic.user_id)
     end
 
-    user_ids = topic.topic_allowed_users(true).pluck(:user_id)
-    user_ids += topic.topic_allowed_groups(true).map { |t| t.group.users.pluck(:id) }.flatten
-
-    user_ids.uniq.reject{ |id| id == topic.user_id }.each do |user_id|
-      topic.notifier.watch_topic!(user_id, nil) unless user_id == -1
+    topic.topic_allowed_users(true).each do |tau|
+      next if tau.user_id == -1 || tau.user_id == topic.user_id
+      topic.notifier.watch!(tau.user_id)
     end
 
-    CategoryUser.auto_watch_new_topic(topic)
-    CategoryUser.auto_track_new_topic(topic)
+    topic.topic_allowed_groups(true).each do |tag|
+      tag.group.group_users.each do |gu|
+        next if gu.user_id == -1 || gu.user_id == topic.user_id
+        action = case gu.notification_level
+                 when TopicUser.notification_levels[:tracking] then "track!"
+                 when TopicUser.notification_levels[:regular]  then "regular!"
+                 when TopicUser.notification_levels[:muted]    then "mute!"
+                 when TopicUser.notification_levels[:watching] then "watch!"
+                 else "track!"
+                 end
+        topic.notifier.send(action, gu.user_id)
+      end
+    end
   end
 
   def setup_topic_params
+    @opts[:visible] = true if @opts[:visible].nil?
+
     topic_params = {
       title: @opts[:title],
       user_id: @user.id,
-      last_post_user_id: @user.id
+      last_post_user_id: @user.id,
+      visible: @opts[:visible]
     }
 
     [:subtype, :archetype, :meta_data, :import_mode].each do |key|
       topic_params[key] = @opts[key] if @opts[key].present?
+    end
+
+    if topic_params[:import_mode] && @opts[:views].to_i > 0
+      topic_params[:views] = @opts[:views].to_i
     end
 
     # Automatically give it a moderator warning subtype if specified
@@ -78,7 +115,7 @@ class TopicCreator
 
     category = find_category
 
-    @guardian.ensure_can_create!(Topic, category) unless @opts[:skip_validations]
+    @guardian.ensure_can_create!(Topic, category) unless (@opts[:skip_validations] || @opts[:archetype] == Archetype.private_message)
 
     topic_params[:category_id] = category.id if category.present?
 
@@ -86,6 +123,10 @@ class TopicCreator
 
     topic_params[:pinned_at] = Time.zone.parse(@opts[:pinned_at].to_s) if @opts[:pinned_at].present?
     topic_params[:pinned_globally] = @opts[:pinned_globally] if @opts[:pinned_globally].present?
+
+    if SiteSetting.topic_featured_link_enabled && @opts[:featured_link].present? && @guardian.can_edit_featured_link?(topic_params[:category_id])
+      topic_params[:featured_link] = @opts[:featured_link]
+    end
 
     topic_params
   end
@@ -102,6 +143,10 @@ class TopicCreator
     else
       Category.find_by(name_lower: @opts[:category].try(:downcase))
     end
+  end
+
+  def setup_tags(topic)
+    DiscourseTagging.tag_topic_by_names(topic, @guardian, @opts[:tags])
   end
 
   def setup_auto_close_time(topic)
@@ -133,22 +178,36 @@ class TopicCreator
 
   def add_users(topic, usernames)
     return unless usernames
-    User.where(username: usernames.split(',')).each do |user|
+
+    names = usernames.split(',').flatten
+    len = 0
+
+    User.where(username: names).each do |user|
       check_can_send_permission!(topic, user)
       @added_users << user
       topic.topic_allowed_users.build(user_id: user.id)
+      len += 1
     end
+
+    rollback_with!(topic, :target_user_not_found) unless len == names.length
   end
 
   def add_groups(topic, groups)
     return unless groups
-    Group.where(name: groups.split(',')).each do |group|
+    names = groups.split(',').flatten
+    len = 0
+
+    Group.where(name: names).each do |group|
       check_can_send_permission!(topic, group)
       topic.topic_allowed_groups.build(group_id: group.id)
+      len += 1
+      group.update_columns(has_messages: true) unless group.has_messages
     end
+
+    rollback_with!(topic, :target_group_not_found) unless len == names.length
   end
 
   def check_can_send_permission!(topic, obj)
-    rollback_with!(topic, :cant_send_pm) unless @guardian.can_send_private_message?(obj)
+    rollback_with!(topic, :cant_send_pm) unless @opts[:skip_validations] || @guardian.can_send_private_message?(obj)
   end
 end

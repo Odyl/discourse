@@ -1,13 +1,17 @@
-import ShowFooter from "discourse/mixins/show-footer";
-
-export default Discourse.Route.extend(ShowFooter, {
-  model: function() {
-    return Discourse.ajax("/about.json").then(function(result) {
-      return result.about;
-    });
+import { ajax } from 'discourse/lib/ajax';
+export default Discourse.Route.extend({
+  model() {
+    return ajax("/about.json").then(result => result.about);
   },
 
-  titleToken: function() {
+  titleToken() {
     return I18n.t('about.simple_title');
+  },
+
+  actions: {
+    didTransition() {
+      this.controllerFor("application").set("showFooter", true);
+      return true;
+    }
   }
 });

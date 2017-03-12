@@ -1,69 +1,37 @@
+import { ajax } from 'discourse/lib/ajax';
 import RestModel from 'discourse/models/rest';
 import Model from 'discourse/models/model';
-
-
-function topicsFrom(result, store) {
-  if (!result) { return; }
-
-  // Stitch together our side loaded data
-  const categories = Discourse.Category.list(),
-        users = Model.extractByKey(result.users, Discourse.User);
-
-  return result.topic_list.topics.map(function (t) {
-    t.category = categories.findBy('id', t.category_id);
-    t.posters.forEach(function(p) {
-      p.user = users[p.user_id];
-    });
-    if (t.participants) {
-      t.participants.forEach(function(p) {
-        p.user = users[p.user_id];
-      });
-    }
-    return store.createRecord('topic', t);
-  });
-}
 
 const TopicList = RestModel.extend({
   canLoadMore: Em.computed.notEmpty("more_topics_url"),
 
-  forEachNew: function(topics, callback) {
+  forEachNew(topics, callback) {
     const topicIds = [];
-    _.each(this.get('topics'),function(topic) {
-      topicIds[topic.get('id')] = true;
-    });
 
-    _.each(topics,function(topic) {
-      if(!topicIds[topic.id]) {
+    _.each(this.get('topics'), topic => topicIds[topic.get('id')] = true);
+
+    _.each(topics, topic => {
+      if (!topicIds[topic.id]) {
         callback(topic);
       }
     });
   },
 
-  refreshSort: function(order, ascending) {
-    const self = this,
-        params = this.get('params') || {};
+  refreshSort(order, ascending) {
+    let params = this.get('params') || {};
 
-    params.order = order || params.order;
-
-    if (ascending === undefined) {
-      params.ascending = ascending;
+    if (params.q) {
+      // search is unique, nothing else allowed with it
+      params = { q: params.q };
     } else {
+      params.order = order || params.order;
       params.ascending = ascending;
     }
 
-    this.set('loaded', false);
-    const store = this.store;
-    store.findFiltered('topicList', {filter: this.get('filter'), params}).then(function(tl) {
-      const newTopics = tl.get('topics'),
-            topics = self.get('topics');
-
-      topics.clear();
-      topics.pushObjects(newTopics);
-      self.setProperties({ loaded: true, more_topics_url: tl.get('topic_list.more_topics_url') });
-    });
+    this.set('params', params);
   },
 
-  loadMore: function() {
+  loadMore() {
     if (this.get('loadingMore')) { return Ember.RSVP.resolve(); }
 
     const moreUrl = this.get('more_topics_url');
@@ -72,13 +40,13 @@ const TopicList = RestModel.extend({
       this.set('loadingMore', true);
 
       const store = this.store;
-      return Discourse.ajax({url: moreUrl}).then(function (result) {
+      return ajax({url: moreUrl}).then(function (result) {
         let topicsAdded = 0;
 
         if (result) {
           // the new topics loaded from the server
-          const newTopics = topicsFrom(result, store),
-              topics = self.get("topics");
+          const newTopics = TopicList.topicsFrom(store, result);
+          const topics = self.get("topics");
 
           self.forEachNew(newTopics, function(t) {
             t.set('highlight', topicsAdded++ === 0);
@@ -102,21 +70,19 @@ const TopicList = RestModel.extend({
 
 
   // loads topics with these ids "before" the current topics
-  loadBefore: function(topic_ids){
+  loadBefore(topic_ids) {
     const topicList = this,
-        topics = this.get('topics');
+          topics = this.get('topics');
 
     // refresh dupes
-    topics.removeObjects(topics.filter(function(topic){
-      return topic_ids.indexOf(topic.get('id')) >= 0;
-    }));
+    topics.removeObjects(topics.filter(topic => topic_ids.indexOf(topic.get('id')) >= 0));
 
-    const url = Discourse.getURL("/") + this.get('filter') + "?topic_ids=" + topic_ids.join(",");
-
+    const url = `${Discourse.getURL("/")}${this.get('filter')}?topic_ids=${topic_ids.join(",")}`;
     const store = this.store;
-    return Discourse.ajax({ url }).then(function(result) {
+
+    return ajax({ url }).then(result => {
       let i = 0;
-      topicList.forEachNew(topicsFrom(result, store), function(t) {
+      topicList.forEachNew(TopicList.topicsFrom(store, result), function(t) {
         // highlight the first of the new topics so we can get a visual feedback
         t.set('highlight', true);
         topics.insertAt(i,t);
@@ -128,6 +94,35 @@ const TopicList = RestModel.extend({
 });
 
 TopicList.reopenClass({
+  topicsFrom(store, result) {
+    if (!result) { return; }
+
+    // Stitch together our side loaded data
+
+    const categories = Discourse.Category.list(),
+          users = Model.extractByKey(result.users, Discourse.User),
+          groups = Model.extractByKey(result.primary_groups, Ember.Object);
+
+    return result.topic_list.topics.map(function (t) {
+      t.category = categories.findBy('id', t.category_id);
+      t.posters.forEach(function(p) {
+        p.user = users[p.user_id];
+        p.extraClasses = p.extras;
+        if (p.primary_group_id) {
+          p.primary_group = groups[p.primary_group_id];
+          if (p.primary_group) {
+            p.extraClasses = `${p.extraClasses||''} group-${p.primary_group.name}`;
+          }
+        }
+      });
+      if (t.participants) {
+        t.participants.forEach(function(p) {
+          p.user = users[p.user_id];
+        });
+      }
+      return store.createRecord('topic', t);
+    });
+  },
 
   munge(json, store) {
     json.inserted = json.inserted || [];
@@ -139,11 +134,8 @@ TopicList.reopenClass({
     json.for_period = json.topic_list.for_period;
     json.loaded = true;
     json.per_page = json.topic_list.per_page;
-    json.topics = topicsFrom(json, store);
+    json.topics = this.topicsFrom(store, json);
 
-    if (json.topic_list.filtered_category) {
-      json.category = Discourse.Category.create(json.topic_list.filtered_category);
-    }
     return json;
   },
 
@@ -152,15 +144,9 @@ TopicList.reopenClass({
     return store.findFiltered('topicList', {filter, params});
   },
 
-  list(filter) {
-    Ember.warn('`Discourse.TopicList.list` is deprecated. Use the store instead');
-    return this.find(filter);
-  },
-
-  // Sets `hideCategory` if all topics in the last have a particular category
+  // hide the category when it has no children
   hideUniformCategory(list, category) {
-    const hideCategory = !list.get('topics').any(function (t) { return t.get('category') !== category; });
-    list.set('hideCategory', hideCategory);
+    list.set('hideCategory', category && !category.get("has_children"));
   }
 
 });

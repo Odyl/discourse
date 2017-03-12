@@ -56,6 +56,10 @@
     }
   }
 
+  .delete-account {
+    overflow: hidden;
+  }
+
   .checkbox-label {
     overflow: auto;
     display: block;
@@ -63,21 +67,12 @@
     padding: 5px 8px;
   }
 
-  .bio-composer #wmd-quote-post {
-    display: none;
-  }
-
-  #pagedown-editor {
-    width: 100%;
-  }
-
   textarea {width: 100%;}
 }
 
 .profile-image {
-  height: 150px;
+  height: 25px;
   width: 100%;
-  background-size: cover;
 }
 
 
@@ -91,7 +86,7 @@
 }
 
 .user-preferences {
-  input.category-group {
+  input.category-selector {
   }
 
   textarea {
@@ -103,16 +98,12 @@
     }
   }
 
-  .bio-composer #wmd-quote-post {
-    display: none;
-  }
-
   .static {
     color: $primary;
     display: inline-block;
   }
   .instructions {
-    color: scale-color($primary, $lightness: 50%);
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
     margin-top: 5px;
     margin-bottom: 10px;
     font-size: 80%;
@@ -143,6 +134,7 @@
 .user-navigation {
   width: 100%;
   margin-top: 20px;
+  min-height: 20px;
 
   h3 {
     color: $primary;
@@ -153,11 +145,6 @@
 
 .user-main {
 
-  width: 100%;
-  float: left;
-  margin-bottom: 50px;
-
-
   table.group-members {
     width: 100%;
     p {
@@ -166,30 +153,31 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    th.seen {
+    th {
+      padding: 0.5em;
       text-align: right;
-    }
-    td.avatar {
-      width: 60px;
+      border-bottom: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
     }
     td {
+      padding: 0.5em;
+      border-bottom: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
       img {
         margin-right: 10px;
       }
-      span.last-seen-at {
+      span.text {
         float: right;
         color: $primary;
       }
     }
+    .user-info {
+      width: 245px;
+    }
   }
 
   .user-content {
-    padding: 10px 8px;
     background-color: $secondary;
-    border: 1px solid scale-color-diff();
-    margin-bottom: 10px;
     box-sizing: border-box;
-    margin-top: 20px;
+    margin-top: 10px;
 
     .btn.right {
       float: right
@@ -205,21 +193,19 @@
 
       th {
         text-align: left;
-        border-bottom: 1px solid scale-color-diff();
+        border-bottom: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
         padding: 5px;
       }
 
       td {
         padding: 5px;
-        border-bottom: 1px solid scale-color-diff();
+        border-bottom: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
       }
     }
   }
 
   .about {
-    background-color: dark-light-diff($primary, $secondary, 0%, -75%);
-    background-size: cover;
-    background-position: center center;
+    background: dark-light-diff($primary, $secondary, 0%, -75%) center;
     width: 100%;
     margin-bottom: 10px;
     overflow: hidden;
@@ -257,8 +243,13 @@
     }
 
     .details {
-      padding: 15px 15px 4px 15px;
-      background-color: rgba($primary, .9);
+      padding: 15px 10px 4px 10px;
+      background: rgba($secondary, .85);
+
+      blockquote {
+        background-color: dark-light-diff($secondary, $primary, 30%, -70%);
+        border-left-color: dark-light-diff($secondary, $primary, 50%, -50%);
+      }
 
       h1 {
         font-size: 2.143em;
@@ -292,7 +283,6 @@
 
       img.avatar {
         float: left;
-        margin-right: 15px;
       }
 
       .suspended {
@@ -303,25 +293,25 @@
         width: 100%;
         position: relative;
         float: left;
-        color: dark-light-diff($secondary, $primary, 75%, 0%);
+        color: $primary;
 
         h1 {font-weight: bold;}
 
         .primary-textual {
           float: left;
+          padding-left: 15px;
           a[href] {
-            color: dark-light-diff($secondary, $primary, 75%, -10%);
+            color: $primary;
           }
         }
 
         .bio {
-          color: dark-light-diff($secondary, $primary, 75%, 0%);
+          color: $primary;
           max-height: 300px;
           overflow: auto;
           max-width: 700px;
 
           a[href] {
-            color: dark-light-diff($secondary, $primary, 75%, 0%);
             text-decoration: underline;
           }
 
@@ -333,16 +323,15 @@
     }
 
     .controls {
-      width: 160px;
-      float: right;
-      text-align: right;
+      float: left;
+      padding-left: 15px;
       ul {
         list-style-type: none;
         margin: 0;
       }
       a {
         padding: 5px 10px;
-        width: 140px;
+        width: 120px;
         margin-bottom: 10px;
       }
     }
@@ -359,14 +348,14 @@
     }
     .secondary { display: none; }
 
-  .profile-image {
-    height: 0;
-  }
+    .profile-image {
+      height: 0;
+    }
 
     .details {
       padding: 12px 15px 2px 15px;
       margin-top: 0;
-      background: rgba($primary, 1);
+      background: rgba($secondary, .85);
       .bio { display: none; }
 
       .primary {
@@ -399,7 +388,6 @@
 
 
   .user-stream {
-    padding: 0 10px;
     .excerpt {
       margin: 5px 0;
       font-size: 0.929em;
@@ -420,7 +408,7 @@
     .item {
       padding: 20px 0 15px 0;
       background-color: $secondary;
-      border-bottom: 1px solid scale-color-diff();
+      border-bottom: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
     }
     .type {
       color: $primary;
@@ -442,10 +430,10 @@
       margin-right: 4px;
     }
     .title {
-      font-size: 1em;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      display: block;
     }
     .name {
       font-size: 1em;
@@ -465,7 +453,7 @@
     }
     .notification {
       &.unread {
-        background-color: dark-light-diff($tertiary, $secondary, 85%, -65%);
+        background-color: dark-light-choose(scale-color($tertiary, $lightness: 85%), srgb-scale($tertiary, $secondary, 15%));
       }
 
       li { display: inline-block; }
@@ -483,9 +471,25 @@
       }
       // common/base/header.scss
       .fa, .icon {
-        color: scale-color($primary, $lightness: 50%);
+        color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
         font-size: 1.714em;
       }
+    }
+    .group-member-info {
+      .name {
+        display: inline-block;
+        margin-top: 5px;
+        color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
+        vertical-align: inherit;
+      }
+      .title {
+        display: inline-block;
+        margin-top: 5px;
+        color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
+      }
+    }
+    .topic-statuses {
+      float: left;
     }
   }
 
@@ -561,7 +565,7 @@
         float: auto;
       }
       p {
-        color: scale-color($primary, $lightness: 50%);
+        color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
         margin-top: 5px;
         margin-bottom: 10px;
         font-size: 80%;
@@ -586,6 +590,32 @@
   display: inline-block;
 }
 
-.notification-buttons {
-  display: inline-block;
+// mobile fixups for badges
+
+.badge-card.medium {
+  width: 300px;
+}
+
+.show-badge-details {
+  margin-bottom: 1em;
+}
+
+.user-badges {
+  margin-bottom: 2em;
+}
+
+.show-badge-details .badge-grant-info {
+  display: none;
+}
+
+.user-info.medium {
+  width: 300px;
+}
+
+.user-info.medium .user-detail {
+  width: 240px;
+}
+
+.user-info.medium .user-image {
+  width: auto;
 }

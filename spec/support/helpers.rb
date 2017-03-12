@@ -1,4 +1,6 @@
 module Helpers
+  extend ActiveSupport::Concern
+
   def self.next_seq
     @next_seq = (@next_seq || 0) + 1
   end
@@ -28,7 +30,7 @@ module Helpers
     args[:title] ||= "This is my title #{Helpers.next_seq}"
     user = args.delete(:user) || Fabricate(:user)
     guardian = Guardian.new(user)
-    args[:category] = args[:category].name if args[:category].is_a?(Category)
+    args[:category] = args[:category].id if args[:category].is_a?(Category)
     TopicCreator.create(user, guardian, args)
   end
 
@@ -37,8 +39,15 @@ module Helpers
     args[:raw] ||= "This is the raw body of my post, it is cool #{Helpers.next_seq}"
     args[:topic_id] = args[:topic].id if args[:topic]
     user = args.delete(:user) || Fabricate(:user)
-    args[:category] = args[:category].name if args[:category].is_a?(Category)
-    PostCreator.create(user, args)
+    args[:category] = args[:category].id if args[:category].is_a?(Category)
+    creator = PostCreator.new(user, args)
+    post = creator.create
+
+    if creator.errors.present?
+      raise StandardError.new(creator.errors.full_messages.join(" "))
+    end
+
+    post
   end
 
   def generate_username(length=10)
@@ -62,6 +71,18 @@ module Helpers
     end
 
     expect(result).to eq(true)
+  end
+
+  def fill_email(mail, from, to, body = nil, subject = nil, cc = nil)
+    result = mail.gsub("FROM", from).gsub("TO", to)
+    result.gsub!(/Hey.*/m, body)  if body
+    result.sub!(/We .*/, subject) if subject
+    result.sub!("CC", cc.presence || "")
+    result
+  end
+
+  def email(email_name)
+    fixture_file("emails/#{email_name}.eml")
   end
 
 end

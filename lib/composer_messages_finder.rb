@@ -3,33 +3,40 @@ class ComposerMessagesFinder
   def initialize(user, details)
     @user = user
     @details = details
+    @topic = Topic.find_by(id: details[:topic_id]) if details[:topic_id]
+  end
+
+  def self.check_methods
+    @check_methods ||= instance_methods.find_all {|m| m =~ /^check\_/}
   end
 
   def find
-    check_reviving_old_topic ||
-    check_education_message ||
-    check_new_user_many_replies ||
-    check_avatar_notification ||
-    check_sequential_replies ||
-    check_dominating_topic
+    self.class.check_methods.each do |m|
+      msg = send(m)
+      return msg if msg.present?
+    end
+    nil
   end
 
   # Determines whether to show the user education text
   def check_education_message
+    return if @topic && @topic.archetype == Archetype.private_message
+
     if creating_topic?
       count = @user.created_topic_count
-      education_key = :education_new_topic
+      education_key = 'education.new-topic'
     else
       count = @user.post_count
-      education_key = :education_new_reply
+      education_key = 'education.new-reply'
     end
 
     if count < SiteSetting.educate_until_posts
       education_posts_text = I18n.t('education.until_posts', count: SiteSetting.educate_until_posts)
       return {
-        templateName: 'composer/education',
+        id: 'education',
+        templateName: 'education',
         wait_for_typing: true,
-        body: PrettyText.cook(SiteText.text_for(education_key, education_posts_text: education_posts_text))
+        body: PrettyText.cook(I18n.t(education_key, education_posts_text: education_posts_text, site_name: SiteSetting.title))
       }
     end
 
@@ -41,7 +48,8 @@ class ComposerMessagesFinder
     return unless replying? && @user.posted_too_much_in_topic?(@details[:topic_id])
 
     {
-      templateName: 'composer/education',
+      id: 'too_many_replies',
+      templateName: 'education',
       body: PrettyText.cook(I18n.t('education.too_many_replies', newuser_max_replies_per_topic: SiteSetting.newuser_max_replies_per_topic))
     }
   end
@@ -55,27 +63,26 @@ class ComposerMessagesFinder
     # We don't notify users who have avatars or who have been notified already.
     return if @user.uploaded_avatar_id || UserHistory.exists_for_user?(@user, :notified_about_avatar)
 
+    # Do not notify user if any of the following is true:
+    # - "disable avatar education message" is enabled
+    # - "sso overrides avatar" is enabled
+    # - "allow uploaded avatars" is disabled
+    return if SiteSetting.disable_avatar_education_message || SiteSetting.sso_overrides_avatar || !SiteSetting.allow_uploaded_avatars
+
     # If we got this far, log that we've nagged them about the avatar
     UserHistory.create!(action: UserHistory.actions[:notified_about_avatar], target_user_id: @user.id )
 
     # Return the message
     {
-      templateName: 'composer/education',
+      id: 'avatar',
+      templateName: 'education',
       body: PrettyText.cook(I18n.t('education.avatar', profile_path: "/users/#{@user.username_lower}"))
     }
   end
 
   # Is a user replying too much in succession?
   def check_sequential_replies
-
-    # We only care about replies to topics
-    return unless replying? && @details[:topic_id] &&
-
-                  # And who have posted enough
-                  (@user.post_count >= SiteSetting.educate_until_posts) &&
-
-                  # And who haven't been notified about sequential replies already
-                  !UserHistory.exists_for_user?(@user, :notified_about_sequential_replies, topic_id: @details[:topic_id])
+    return unless educate_reply?(:notified_about_sequential_replies)
 
     # Count the topics made by this user in the last day
     recent_posts_user_ids = Post.where(topic_id: @details[:topic_id])
@@ -94,31 +101,25 @@ class ComposerMessagesFinder
                         topic_id: @details[:topic_id] )
 
     {
-      templateName: 'composer/education',
+      id: 'sequential_replies',
+      templateName: 'education',
       wait_for_typing: true,
-      extraClass: 'urgent',
+      extraClass: 'education-message',
       body: PrettyText.cook(I18n.t('education.sequential_replies'))
     }
   end
 
   def check_dominating_topic
+    return unless educate_reply?(:notified_about_dominating_topic)
 
-    # We only care about replies to topics for a user who has posted enough
-    return unless replying? &&
-                  @details[:topic_id] &&
-                  (@user.post_count >= SiteSetting.educate_until_posts) &&
-                  !UserHistory.exists_for_user?(@user, :notified_about_dominating_topic, topic_id: @details[:topic_id])
+    return if @topic.blank? ||
+              @topic.user_id == @user.id ||
+              @topic.posts_count < SiteSetting.summary_posts_required ||
+              @topic.private_message?
 
-    topic = Topic.find_by(id: @details[:topic_id])
+    posts_by_user = @user.posts.where(topic_id: @topic.id).count
 
-    return if topic.blank? ||
-              topic.user_id == @user.id ||
-              topic.posts_count < SiteSetting.summary_posts_required ||
-              topic.archetype == Archetype.private_message
-
-    posts_by_user = @user.posts.where(topic_id: topic.id).count
-
-    ratio = (posts_by_user.to_f / topic.posts_count.to_f)
+    ratio = (posts_by_user.to_f / @topic.posts_count.to_f)
     return if ratio < (SiteSetting.dominating_topic_minimum_percent.to_f / 100.0)
 
     # Log the topic notification
@@ -127,41 +128,85 @@ class ComposerMessagesFinder
                         topic_id: @details[:topic_id])
 
     {
-      templateName: 'composer/education',
+      id: 'dominating_topic',
+      templateName: 'education',
       wait_for_typing: true,
-      extraClass: 'urgent',
+      extraClass: 'education-message',
       body: PrettyText.cook(I18n.t('education.dominating_topic', percent: (ratio * 100).round))
     }
   end
 
-  def check_reviving_old_topic
-    return unless @details[:topic_id]
+  def check_get_a_room(min_users_posted: 5)
+    return unless educate_reply?(:notified_about_get_a_room)
+    return unless @details[:post_id].present?
 
-    topic = Topic.find_by(id: @details[:topic_id])
+    reply_to_user_id = Post.where(id: @details[:post_id]).pluck(:user_id)[0]
 
-    return unless replying?
+    # Users's last x posts in the topic
+    last_x_replies = @topic.
+      posts.
+      where(user_id: @user.id).
+      order('created_at desc').
+      limit(SiteSetting.get_a_room_threshold).
+      pluck(:reply_to_user_id).
+      find_all {|uid| uid != @user.id && uid == reply_to_user_id}
 
-    return if topic.nil? ||
-              SiteSetting.warn_reviving_old_topic_age < 1 ||
-              topic.last_posted_at.nil? ||
-              topic.last_posted_at > SiteSetting.warn_reviving_old_topic_age.days.ago
+    return unless last_x_replies.size == SiteSetting.get_a_room_threshold
+    return unless @topic.posts.count('distinct user_id') >= min_users_posted
+
+    UserHistory.create!(action: UserHistory.actions[:notified_about_get_a_room],
+                        target_user_id: @user.id,
+                        topic_id: @details[:topic_id])
+
+    reply_username = User.where(id: last_x_replies[0]).pluck(:username).first
 
     {
-      templateName: 'composer/education',
+      id: 'get_a_room',
+      templateName: 'education',
+      wait_for_typing: true,
+      extraClass: 'education-message',
+      body: PrettyText.cook(
+        I18n.t(
+          'education.get_a_room',
+          count: SiteSetting.get_a_room_threshold,
+          reply_username: reply_username
+        )
+      )
+    }
+  end
+
+  def check_reviving_old_topic
+    return unless replying?
+    return if @topic.nil? ||
+              SiteSetting.warn_reviving_old_topic_age < 1 ||
+              @topic.last_posted_at.nil? ||
+              @topic.last_posted_at > SiteSetting.warn_reviving_old_topic_age.days.ago
+
+    {
+      id: 'reviving_old',
+      templateName: 'education',
       wait_for_typing: false,
-      extraClass: 'urgent',
-      body: PrettyText.cook(I18n.t('education.reviving_old_topic', days: (Time.zone.now - topic.last_posted_at).round / 1.day))
+      extraClass: 'education-message',
+      body: PrettyText.cook(I18n.t('education.reviving_old_topic', days: (Time.zone.now - @topic.last_posted_at).round / 1.day))
     }
   end
 
   private
 
+    def educate_reply?(type)
+      replying? &&
+      @details[:topic_id] &&
+      (@topic.present? && !@topic.private_message?) &&
+      (@user.post_count >= SiteSetting.educate_until_posts) &&
+      !UserHistory.exists_for_user?(@user, type, topic_id: @details[:topic_id])
+    end
+
     def creating_topic?
-      @details[:composerAction] == "createTopic"
+      @details[:composer_action] == "createTopic"
     end
 
     def replying?
-      @details[:composerAction] == "reply"
+      @details[:composer_action] == "reply"
     end
 
 end

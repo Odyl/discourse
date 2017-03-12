@@ -1,11 +1,11 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe SearchController do
 
   context "integration" do
 
     before do
-      ActiveRecord::Base.observers.enable :search_observer
+      SearchIndexer.enable
     end
 
     it "can search correctly" do

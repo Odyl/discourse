@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe UploadsController do
 
@@ -19,11 +19,32 @@ describe UploadsController do
         })
       end
 
+      let(:fake_jpg) do
+        ActionDispatch::Http::UploadedFile.new({
+          filename: 'fake.jpg',
+          tempfile: file_from_fixtures("fake.jpg")
+        })
+      end
+
       let(:text_file) do
         ActionDispatch::Http::UploadedFile.new({
           filename: 'LICENSE.TXT',
           tempfile: File.new("#{Rails.root}/LICENSE.txt")
         })
+      end
+
+      it 'fails if type is invalid' do
+        xhr :post, :create, file: logo, type: "invalid type cause has space"
+        expect(response.status).to eq 403
+
+        xhr :post, :create, file: logo, type: "\\invalid"
+        expect(response.status).to eq 403
+
+        xhr :post, :create, file: logo, type: "invalid."
+        expect(response.status).to eq 403
+
+        xhr :post, :create, file: logo, type: "toolong"*100
+        expect(response.status).to eq 403
       end
 
       it 'is successful with an image' do
@@ -53,10 +74,25 @@ describe UploadsController do
         expect(message.data).to be
       end
 
-      it 'correctly sets retain_hours for admins' do
+      it 'is successful with synchronous api' do
+        SiteSetting.stubs(:authorized_extensions).returns("*")
+        controller.stubs(:is_api?).returns(true)
+
         Jobs.expects(:enqueue).with(:create_thumbnails, anything)
 
+        FakeWeb.register_uri(:get, "http://example.com/image.png", :body => File.read('spec/fixtures/images/logo.png'))
+
+        xhr :post, :create, url: 'http://example.com/image.png', type: "avatar", synchronous: true
+
+        json = ::JSON.parse(response.body)
+
+        expect(response.status).to eq 200
+        expect(json["id"]).to be
+      end
+
+      it 'correctly sets retain_hours for admins' do
         log_in :admin
+        Jobs.expects(:enqueue).with(:create_thumbnails, anything)
 
         message = MessageBus.track_publish do
           xhr :post, :create, file: logo, retain_hours: 100, type: "profile_background"
@@ -64,6 +100,17 @@ describe UploadsController do
 
         id = message.data["id"]
         expect(Upload.find(id).retain_hours).to eq(100)
+      end
+
+      it 'requires a file' do
+        Jobs.expects(:enqueue).never
+
+        message = MessageBus.track_publish do
+          xhr :post, :create, type: "composer"
+        end.first
+
+        expect(response.status).to eq 200
+        expect(message.data["errors"]).to eq(I18n.t("upload.file_missing"))
       end
 
       it 'properly returns errors' do
@@ -77,6 +124,32 @@ describe UploadsController do
 
         expect(response.status).to eq 200
         expect(message.data["errors"]).to be
+      end
+
+      it 'ensures allow_uploaded_avatars is enabled when uploading an avatar' do
+        SiteSetting.stubs(:allow_uploaded_avatars).returns(false)
+        xhr :post, :create, file: logo, type: "avatar"
+        expect(response).to_not be_success
+      end
+
+      it 'ensures sso_overrides_avatar is not enabled when uploading an avatar' do
+        SiteSetting.stubs(:sso_overrides_avatar).returns(true)
+        xhr :post, :create, file: logo, type: "avatar"
+        expect(response).to_not be_success
+      end
+
+      it 'returns an error when it could not determine the dimensions of an image' do
+        Jobs.expects(:enqueue).with(:create_thumbnails, anything).never
+
+        message = MessageBus.track_publish do
+          xhr :post, :create, file: fake_jpg, type: "composer"
+        end.first
+
+        expect(response.status).to eq 200
+
+        expect(message.channel).to eq("/uploads/composer")
+        expect(message.data["errors"]).to be
+        expect(message.data["errors"][0]).to eq(I18n.t("upload.images.size_not_found"))
       end
 
     end
@@ -97,7 +170,7 @@ describe UploadsController do
       expect(response.response_code).to eq(404)
     end
 
-    it "returns 404 when the upload doens't exist" do
+    it "returns 404 when the upload doesn't exist" do
       Upload.stubs(:find_by).returns(nil)
 
       get :show, site: site, sha: sha, extension: "pdf"
@@ -112,6 +185,16 @@ describe UploadsController do
       controller.expects(:send_file)
 
       get :show, site: site, sha: sha, extension: "zip"
+    end
+
+    it "handles file without extension" do
+      SiteSetting.authorized_extensions = "*"
+      upload = Fabricate(:upload, original_filename: "image_file", sha1: sha)
+      controller.stubs(:render)
+      controller.expects(:send_file)
+
+      get :show, site: site, sha: sha
+      expect(response).to be_success
     end
 
     context "prevent anons from downloading files" do

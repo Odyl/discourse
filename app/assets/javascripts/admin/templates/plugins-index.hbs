@@ -1,32 +1,54 @@
-{{#if length}}
+{{#if model.length}}
 
-  {{d-button label="admin.plugins.change_settings"
-             icon="gear"
-             class='settings-button pull-right'
-             action="showSettings"}}
+  {{#if currentUser.admin}}
+    {{d-button label="admin.plugins.change_settings"
+               icon="gear"
+               class='settings-button pull-right'
+               action="showSettings"}}
+  {{/if}}
 
   <h3>{{i18n "admin.plugins.installed"}}</h3>
 
   <br/>
 
-  <table>
+  <table class="admin-plugins">
     <thead>
       <tr>
         <th>{{i18n "admin.plugins.name"}}</th>
         <th>{{i18n "admin.plugins.version"}}</th>
+        <th>{{i18n "admin.plugins.enabled"}}</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
-      {{#each plugin in controller}}
+      {{#each model as |plugin|}}
         <tr>
           <td>
             {{#if plugin.url}}
-              <a {{bind-attr href=plugin.url}} target="_blank">{{plugin.name}}</a>
+              <a href={{plugin.url}} target="_blank">{{plugin.name}}</a>
             {{else}}
               {{plugin.name}}
             {{/if}}
           </td>
           <td>{{plugin.version}}</td>
+          <td class="col-enabled">
+            {{#if plugin.enabled_setting}}
+              {{#if plugin.enabled}}
+                {{i18n "admin.plugins.is_enabled"}}
+              {{else}}
+                {{i18n "admin.plugins.not_enabled"}}
+              {{/if}}
+            {{else}}
+              {{i18n "admin.plugins.is_enabled"}}
+            {{/if}}
+          </td>
+          <td>
+            {{#if currentUser.admin}}
+              {{#if plugin.enabled_setting}}
+                {{d-button action="showSettings" actionParam=plugin icon="gear" label="admin.plugins.change_settings_short"}}
+              {{/if}}
+            {{/if}}
+          </td>
         </tr>
       {{/each}}
     </tbody>

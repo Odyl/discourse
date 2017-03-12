@@ -4,14 +4,13 @@ class RandomTopicSelector
   BACKFILL_LOW_WATER_MARK = 500
 
   def self.backfill(category=nil)
-
     exclude = category.try(:topic_id)
 
     # don't leak private categories into the "everything" group
     user = category ? CategoryFeaturedTopic.fake_admin : nil
 
     options = {
-      per_page: SiteSetting.category_featured_topics,
+      per_page: category ? category.num_featured_topics : 3,
       visible: true,
       no_definitions: true
     }
@@ -20,8 +19,11 @@ class RandomTopicSelector
     options[:category] = category.id if category
 
     query = TopicQuery.new(user, options)
+
+
     results = query.latest_results.order('RANDOM()')
                    .where(closed: false, archived: false)
+                   .where("topics.created_at > ?", SiteSetting.suggested_topics_max_days_old.days.ago)
                    .limit(BACKFILL_SIZE)
                    .reorder('RANDOM()')
                    .pluck(:id)
@@ -40,15 +42,22 @@ class RandomTopicSelector
 
     results = []
 
-    left = count
+    return results if count < 1
 
-    while left > 0
-      id = $redis.lpop key
-      break unless id
-
-      results << id.to_i
-      left -= 1
+    results = $redis.multi do
+      $redis.lrange(key, 0, count-1)
+      $redis.ltrim(key, count, -1)
     end
+
+    if !results.is_a?(Array) # Redis is in readonly mode
+      results = $redis.lrange(key, 0, count-1)
+    else
+      results = results[0]
+    end
+
+    results.map!(&:to_i)
+
+    left = count - results.length
 
     backfilled = false
     if left > 0
@@ -66,10 +75,6 @@ class RandomTopicSelector
     end
 
     results
-  end
-
-  def self.clear_cache!
-    $redis.keys('random_topic_cache*').each{|k| $redis.del k}
   end
 
   def self.cache_key(category=nil)

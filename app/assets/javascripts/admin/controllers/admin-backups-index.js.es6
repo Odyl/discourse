@@ -1,8 +1,8 @@
-export default Ember.ArrayController.extend({
-  needs: ["adminBackups"],
-  status: Em.computed.alias("controllers.adminBackups"),
-  isOperationRunning: Em.computed.alias("status.isOperationRunning"),
-  restoreDisabled: Em.computed.alias("status.restoreDisabled"),
+import { ajax } from 'discourse/lib/ajax';
+
+export default Ember.Controller.extend({
+  adminBackups: Ember.inject.controller(),
+  status: Ember.computed.alias('adminBackups.model'),
 
   uploadLabel: function() { return I18n.t("admin.backups.upload.label"); }.property(),
 
@@ -35,16 +35,23 @@ export default Ember.ArrayController.extend({
       } else {
         this._toggleReadOnlyMode(false);
       }
-    }
+    },
 
+    download(backup) {
+      let link = backup.get('filename');
+      ajax("/admin/backups/" + link, { type: "PUT" })
+      .then(() => {
+        bootbox.alert(I18n.t("admin.backups.operations.download.alert"));
+      });
+    }
   },
 
   _toggleReadOnlyMode(enable) {
     var site = this.site;
-    Discourse.ajax("/admin/backups/readonly", {
+    ajax("/admin/backups/readonly", {
       type: "PUT",
       data: { enable: enable }
-    }).then(function() {
+    }).then(() => {
       site.set("isReadOnly", enable);
     });
   }

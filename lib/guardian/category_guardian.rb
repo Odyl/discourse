@@ -45,7 +45,11 @@ module CategoryGuardian
   end
 
   def can_see_category?(category)
-    not(category.read_restricted) || secure_category_ids.include?(category.id)
+    return false unless category
+    return true if is_admin?
+    return true if !category.read_restricted
+    return true if is_staged? && category.email_in.present? && category.email_in_allow_strangers
+    secure_category_ids.include?(category.id)
   end
 
   def secure_category_ids
@@ -54,11 +58,18 @@ module CategoryGuardian
 
   # all allowed category ids
   def allowed_category_ids
-    unrestricted = Category.where(read_restricted: false).pluck(:id)
-    unrestricted.concat(secure_category_ids)
+    @allowed_category_ids ||=
+      begin
+        unrestricted = Category.where(read_restricted: false).pluck(:id)
+        unrestricted.concat(secure_category_ids)
+      end
   end
 
   def topic_create_allowed_category_ids
     @topic_create_allowed_category_ids ||= @user.topic_create_allowed_category_ids
+  end
+
+  def topic_featured_link_allowed_category_ids
+    @topic_featured_link_allowed_category_ids = Category.where(topic_featured_link_allowed: true).pluck(:id)
   end
 end

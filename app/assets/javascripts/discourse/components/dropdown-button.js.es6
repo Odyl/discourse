@@ -1,6 +1,6 @@
-import StringBuffer from 'discourse/mixins/string-buffer';
+import { bufferedRender } from 'discourse-common/lib/buffered-render';
 
-export default Ember.Component.extend(StringBuffer, {
+export default Ember.Component.extend(bufferedRender({
   classNameBindings: [':btn-group', 'hidden'],
   rerenderTriggers: ['text', 'longDescription'],
 
@@ -23,12 +23,13 @@ export default Ember.Component.extend(StringBuffer, {
     this.$().off('click.dropdown-button', 'ul li');
   }.on('willDestroyElement'),
 
-  renderString(buffer) {
+  buildBuffer(buffer) {
+    const title = this.get('title');
+    if (title) {
+      buffer.push("<h4 class='title'>" + title + "</h4>");
+    }
 
-    buffer.push("<h4 class='title'>" + this.get('title') + "</h4>");
-    buffer.push("<button class='btn standard dropdown-toggle' data-toggle='dropdown'>");
-    buffer.push(this.get('text'));
-    buffer.push("</button>");
+    buffer.push(`<button class='btn standard dropdown-toggle ${this.get('buttonExtraClasses')}' data-toggle='dropdown'>${this.get('text')}</button>`);
     buffer.push("<ul class='dropdown-menu'>");
 
     const contents = this.get('dropDownContent');
@@ -55,4 +56,4 @@ export default Ember.Component.extend(StringBuffer, {
       buffer.push("</p>");
     }
   }
-});
+}));

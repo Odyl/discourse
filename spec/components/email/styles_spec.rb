@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'email'
 
 describe Email::Styles do
@@ -30,8 +30,14 @@ describe Email::Styles do
       expect(frag.at("img")["style"]).to match("max-width")
     end
 
-    it "adds a width and height to images with an emoji path" do
+    it "adds a width and height to emojis" do
       frag = basic_fragment("<img src='/images/emoji/fish.png' class='emoji'>")
+      expect(frag.at("img")["width"]).to eq("20")
+      expect(frag.at("img")["height"]).to eq("20")
+    end
+
+    it "adds a width and height to custom emojis" do
+      frag = basic_fragment("<img src='/uploads/default/_emoji/fish.png' class='emoji emoji-custom'>")
       expect(frag.at("img")["width"]).to eq("20")
       expect(frag.at("img")["height"]).to eq("20")
     end
@@ -66,12 +72,12 @@ describe Email::Styles do
     end
 
     it "attaches a style to a tags" do
-      frag = html_fragment("<a href='#'>wat</a>")
+      frag = html_fragment("<a href>wat</a>")
       expect(frag.at('a')['style']).to be_present
     end
 
     it "attaches a style to a tags" do
-      frag = html_fragment("<a href='#'>wat</a>")
+      frag = html_fragment("<a href>wat</a>")
       expect(frag.at('a')['style']).to be_present
     end
 
@@ -95,6 +101,12 @@ describe Email::Styles do
       expect(frag.at('iframe')).to be_blank
       expect(frag.at('a')).to be_blank
     end
+
+    it "won't allow empty iframe src, strips them with no link" do
+      frag = html_fragment("<iframe src=''></iframe>")
+      expect(frag.at('iframe')).to be_blank
+      expect(frag.at('a')).to be_blank
+    end
   end
 
   context "rewriting protocol relative URLs to the forum" do
@@ -105,7 +117,7 @@ describe Email::Styles do
 
     context "without https" do
       before do
-        SiteSetting.stubs(:use_https).returns(false)
+        SiteSetting.stubs(:force_https).returns(false)
       end
 
       it "rewrites the href to have http" do
@@ -126,7 +138,7 @@ describe Email::Styles do
 
     context "with https" do
       before do
-        SiteSetting.stubs(:use_https).returns(true)
+        SiteSetting.stubs(:force_https).returns(true)
       end
 
       it "rewrites the forum URL to have https" do
@@ -147,5 +159,27 @@ describe Email::Styles do
 
   end
 
+  context "strip_avatars_and_emojis" do
+    it "works for lonesome emoji with no title" do
+      emoji = "<img src='/images/emoji/emoji_one/crying_cat_face.png'>"
+      style = Email::Styles.new(emoji)
+      style.strip_avatars_and_emojis
+      expect(style.to_html).to match_html(emoji)
+    end
+
+    it "works for lonesome emoji with title" do
+      emoji = "<img title='cry_cry' src='/images/emoji/emoji_one/crying_cat_face.png'>"
+      style = Email::Styles.new(emoji)
+      style.strip_avatars_and_emojis
+      expect(style.to_html).to match_html("cry_cry")
+    end
+  end
+
+  context "onebox_styles" do
+    it "renders quote as <blockquote>" do
+      fragment = html_fragment('<aside class="quote"> <div class="title"> <div class="quote-controls"> <i class="fa fa-chevron-down" title="expand/collapse"></i><a href="/t/xyz/123" title="go to the quoted post" class="back"></a> </div> <img alt="" width="20" height="20" src="https://cdn-enterprise.discourse.org/boingboing/user_avatar/bbs.boingboing.net/techapj/40/54379_1.png" class="avatar">techAPJ: </div> <blockquote> <p>lorem ipsum</p> </blockquote> </aside>')
+      expect(fragment.to_s.squish).to match(/^<blockquote.+<\/blockquote>$/)
+    end
+  end
 
 end

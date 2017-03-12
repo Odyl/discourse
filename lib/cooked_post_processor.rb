@@ -2,41 +2,59 @@
 # For example, inserting the onebox content, or image sizes/thumbnails.
 
 require_dependency 'url_helper'
+require_dependency 'pretty_text'
 
 class CookedPostProcessor
   include ActionView::Helpers::NumberHelper
-  include UrlHelper
+
+  attr_reader :cooking_options
 
   def initialize(post, opts={})
     @dirty = false
     @opts = opts
     @post = post
     @previous_cooked = (@post.cooked || "").dup
-    @doc = Nokogiri::HTML::fragment(post.cooked)
+    # NOTE: we re-cook the post here in order to prevent timing issues with edits
+    # cf. https://meta.discourse.org/t/edit-of-rebaked-post-doesnt-show-in-html-only-in-raw/33815/6
+    @cooking_options = post.cooking_options || opts[:cooking_options] || {}
+    @cooking_options[:topic_id] = post.topic_id
+    @cooking_options = @cooking_options.symbolize_keys
+    @cooking_options[:omit_nofollow] = true if post.omit_nofollow?
+
+    analyzer = post.post_analyzer
+    @doc = Nokogiri::HTML::fragment(analyzer.cook(post.raw, @cooking_options))
+    @has_oneboxes = analyzer.found_oneboxes?
     @size_cache = {}
   end
 
   def post_process(bypass_bump = false)
-    keep_reverse_index_up_to_date
-    post_process_images
-    post_process_oneboxes
-    optimize_urls
-    pull_hotlinked_images(bypass_bump)
+    DistributedMutex.synchronize("post_process_#{@post.id}") do
+      keep_reverse_index_up_to_date
+      post_process_images
+      post_process_oneboxes
+      optimize_urls
+      pull_hotlinked_images(bypass_bump)
+      grant_badges
+    end
+  end
+
+  def has_emoji?
+    (@doc.css("img.emoji") - @doc.css(".quote img")).size > 0
+  end
+
+  def grant_badges
+    return unless Guardian.new.can_see?(@post)
+
+    BadgeGranter.grant(Badge.find(Badge::FirstEmoji), @post.user, post_id: @post.id) if has_emoji?
+    BadgeGranter.grant(Badge.find(Badge::FirstOnebox), @post.user, post_id: @post.id) if @has_oneboxes
+    BadgeGranter.grant(Badge.find(Badge::FirstReplyByEmail), @post.user, post_id: @post.id) if @post.is_reply_by_email?
   end
 
   def keep_reverse_index_up_to_date
     upload_ids = Set.new
 
-    @doc.css("a[href]").each do |a|
-      href = a["href"].to_s
-      if upload = Upload.get_from_url(href)
-        upload_ids << upload.id
-      end
-    end
-
-    @doc.css("img[src]").each do |img|
-      src = img["src"].to_s
-      if upload = Upload.get_from_url(src)
+    @doc.css("a/@href", "img/@src").each do |media|
+      if upload = Upload.get_from_url(media.value)
         upload_ids << upload.id
       end
     end
@@ -59,7 +77,7 @@ class CookedPostProcessor
       convert_to_link!(img)
     end
 
-    update_topic_image(images)
+    update_post_image
   end
 
   def extract_images
@@ -67,6 +85,19 @@ class CookedPostProcessor
     @doc.css("img[src]") -
     # minus, data images
     @doc.css("img[src^='data']") -
+    # minus, emojis
+    @doc.css("img.emoji") -
+    # minus, image inside oneboxes
+    oneboxed_images -
+    # minus, images inside quotes
+    @doc.css(".quote img")
+  end
+
+  def extract_images_for_post
+    # all image with a src attribute
+    @doc.css("img[src]") -
+    # minus, emojis
+    @doc.css("img.emoji") -
     # minus, image inside oneboxes
     oneboxed_images -
     # minus, images inside quotes
@@ -85,13 +116,30 @@ class CookedPostProcessor
     w, h = get_size_from_attributes(img) ||
            get_size_from_image_sizes(img["src"], @opts[:image_sizes]) ||
            get_size(img["src"])
+
     # limit the size of the thumbnail
     img["width"], img["height"] = ImageSizer.resize(w, h)
   end
 
   def get_size_from_attributes(img)
     w, h = img["width"].to_i, img["height"].to_i
-    return [w, h] if w > 0 && h > 0
+    return [w, h] unless w <= 0 || h <= 0
+    # if only width or height are specified attempt to scale image
+    if w > 0 || h > 0
+      w = w.to_f
+      h = h.to_f
+
+      return unless original_image_size = get_size(img["src"])
+      original_width, original_height = original_image_size.map(&:to_f)
+
+      if w > 0
+        ratio = w/original_width
+        [w.floor, (original_height*ratio).floor]
+      else
+        ratio = h/original_height
+        [(original_width*ratio).floor, h.floor]
+      end
+    end
   end
 
   def get_size_from_image_sizes(src, image_sizes)
@@ -106,13 +154,18 @@ class CookedPostProcessor
   end
 
   def get_size(url)
+    return @size_cache[url] if @size_cache.has_key?(url)
+
     absolute_url = url
     absolute_url = Discourse.base_url_no_prefix + absolute_url if absolute_url =~ /^\/[^\/]/
     # FastImage fails when there's no scheme
     absolute_url = SiteSetting.scheme + ":" + absolute_url if absolute_url.start_with?("//")
+
     return unless is_valid_image_url?(absolute_url)
+
     # we can *always* crawl our own images
     return unless SiteSetting.crawl_images? || Discourse.store.has_been_uploaded?(url)
+
     @size_cache[url] ||= FastImage.size(absolute_url)
   rescue Zlib::BufError # FastImage.size raises BufError for some gifs
   end
@@ -123,6 +176,10 @@ class CookedPostProcessor
   rescue URI::InvalidURIError
   end
 
+  # only crop when the image is taller than 16:9
+  # we only use 95% of that to allow for a small margin
+  MIN_RATIO_TO_CROP ||= (9.0 / 16.0) * 0.95
+
   def convert_to_link!(img)
     src = img["src"]
     return unless src.present?
@@ -130,13 +187,30 @@ class CookedPostProcessor
     width, height = img["width"].to_i, img["height"].to_i
     original_width, original_height = get_size(src)
 
+    # can't reach the image...
+    if original_width.nil? ||
+       original_height.nil? ||
+       original_width == 0 ||
+       original_height == 0
+      Rails.logger.info "Can't reach '#{src}' to get its dimension."
+      return
+    end
+
     return if original_width.to_i <= width && original_height.to_i <= height
     return if original_width.to_i <= SiteSetting.max_image_width && original_height.to_i <= SiteSetting.max_image_height
 
     return if is_a_hyperlink?(img)
 
+    crop = false
+    if original_width.to_f / original_height.to_f < MIN_RATIO_TO_CROP
+      crop = true
+      width, height = ImageSizer.crop(original_width, original_height)
+      img["width"] = width
+      img["height"] = height
+    end
+
     if upload = Upload.get_from_url(src)
-      upload.create_thumbnail!(width, height)
+      upload.create_thumbnail!(width, height, crop)
     end
 
     add_lightbox!(img, original_width, original_height, upload)
@@ -184,9 +258,9 @@ class CookedPostProcessor
     informations = "#{original_width}x#{original_height}"
     informations << " #{number_to_human_size(upload.filesize)}" if upload
 
-    a["title"] = img["title"] || filename
+    a["title"] = CGI.escapeHTML(img["title"] || filename)
 
-    meta.add_child create_span_node("filename", img["title"] || filename)
+    meta.add_child create_span_node("filename", a["title"])
     meta.add_child create_span_node("informations", informations)
     meta.add_child create_span_node("expand")
   end
@@ -204,10 +278,11 @@ class CookedPostProcessor
     span
   end
 
-  def update_topic_image(images)
-    if @post.is_first_post?
-      img = images.first
-      @post.topic.update_column(:image_url, img["src"]) if img["src"].present?
+  def update_post_image
+    img = extract_images_for_post.first
+    if img["src"].present?
+      @post.update_column(:image_url, img["src"][0...255]) # post
+      @post.topic.update_column(:image_url, img["src"][0...255]) if @post.is_first_post? # topic
     end
   end
 
@@ -218,23 +293,43 @@ class CookedPostProcessor
     }
 
     # apply oneboxes
-    Oneboxer.apply(@doc) { |url| Oneboxer.onebox(url, args) }
+    Oneboxer.apply(@doc, topic_id: @post.topic_id) do |url|
+      @has_oneboxes = true
+      Oneboxer.onebox(url, args)
+    end
 
     # make sure we grab dimensions for oneboxed images
     oneboxed_images.each { |img| limit_size!(img) }
+
+    # respect nofollow admin settings
+    if !@cooking_options[:omit_nofollow] && SiteSetting.add_rel_nofollow_to_user_content
+      PrettyText.add_rel_nofollow_to_user_content(@doc)
+    end
   end
 
   def optimize_urls
+    # attachments can't be on the CDN when either setting is enabled
+    if SiteSetting.login_required || SiteSetting.prevent_anons_from_downloading_files
+      @doc.css("a.attachment[href]").each do |a|
+        href = a["href"].to_s
+        a["href"] = UrlHelper.schemaless UrlHelper.absolute_without_cdn(href) if UrlHelper.is_local(href)
+      end
+    end
+
+    use_s3_cdn = SiteSetting.enable_s3_uploads && SiteSetting.s3_cdn_url.present?
+
     %w{href data-download-href}.each do |selector|
       @doc.css("a[#{selector}]").each do |a|
-        href = a["#{selector}"].to_s
-        a["#{selector}"] = schemaless absolute(href) if is_local(href)
+        href = a[selector].to_s
+        a[selector] = UrlHelper.schemaless UrlHelper.absolute(href) if UrlHelper.is_local(href)
+        a[selector] = Discourse.store.cdn_url(a[selector]) if use_s3_cdn
       end
     end
 
     @doc.css("img[src]").each do |img|
       src = img["src"].to_s
-      img["src"] = schemaless absolute(src) if is_local(src)
+      img["src"] = UrlHelper.schemaless UrlHelper.absolute(src) if UrlHelper.is_local(src)
+      img["src"] = Discourse.store.cdn_url(img["src"]) if use_s3_cdn
     end
   end
 
@@ -243,12 +338,14 @@ class CookedPostProcessor
     return unless SiteSetting.download_remote_images_to_local?
     # have we enough disk space?
     return if disable_if_low_on_disk_space
+    # don't download remote images for posts that are more than n days old
+    return unless @post.created_at > (Date.today - SiteSetting.download_remote_images_max_days_old)
     # we only want to run the job whenever it's changed by a user
     return if @post.last_editor_id == Discourse.system_user.id
     # make sure no other job is scheduled
     Jobs.cancel_scheduled_job(:pull_hotlinked_images, post_id: @post.id)
     # schedule the job
-    delay = SiteSetting.ninja_edit_window + 1
+    delay = SiteSetting.editing_grace_period + 1
     Jobs.enqueue_in(delay.seconds.to_i, :pull_hotlinked_images, post_id: @post.id, bypass_bump: bypass_bump)
   end
 
@@ -260,10 +357,15 @@ class CookedPostProcessor
     reason = I18n.t("disable_remote_images_download_reason")
     staff_action_logger = StaffActionLogger.new(Discourse.system_user)
     staff_action_logger.log_site_setting_change("download_remote_images_to_local", true, false, { details: reason })
+
     # also send a private message to the site contact user
-    SystemMessage.create_from_system_user(Discourse.site_contact_user, :download_remote_images_disabled)
+    notify_about_low_disk_space
 
     true
+  end
+
+  def notify_about_low_disk_space
+    SystemMessage.create_from_system_user(Discourse.site_contact_user, :download_remote_images_disabled)
   end
 
   def available_disk_space

@@ -1,20 +1,22 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe UserBadgesController do
   let(:user) { Fabricate(:user) }
   let(:badge) { Fabricate(:badge) }
 
   context 'index' do
-    it 'doest not leak private info' do
+    it 'does not leak private info' do
       badge = Fabricate(:badge, target_posts: true, show_posts: false)
       p = create_post
       UserBadge.create(badge: badge, user: user, post_id: p.id, granted_by_id: -1, granted_at: Time.now)
 
       xhr :get, :index, badge_id: badge.id
       expect(response.status).to eq(200)
+
       parsed = JSON.parse(response.body)
       expect(parsed["topics"]).to eq(nil)
-      expect(parsed["user_badges"][0]["post_id"]).to eq(nil)
+      expect(parsed["badges"].length).to eq(1)
+      expect(parsed["user_badge_info"]["user_badges"][0]["post_id"]).to eq(nil)
     end
   end
 
@@ -22,7 +24,7 @@ describe UserBadgesController do
     let!(:user_badge) { UserBadge.create(badge: badge, user: user, granted_by: Discourse.system_user, granted_at: Time.now) }
 
     it 'requires username or badge_id to be specified' do
-      expect { xhr :get, :index }.to raise_error
+      expect { xhr :get, :index }.to raise_error(ActionController::ParameterMissing)
     end
 
     it 'returns user_badges for a user' do
@@ -38,7 +40,7 @@ describe UserBadgesController do
 
       expect(response.status).to eq(200)
       parsed = JSON.parse(response.body)
-      expect(parsed["user_badges"].length).to eq(1)
+      expect(parsed["user_badge_info"]["user_badges"].length).to eq(1)
     end
 
     it 'includes counts when passed the aggregate argument' do
@@ -52,7 +54,7 @@ describe UserBadgesController do
 
   context 'create' do
     it 'requires username to be specified' do
-      expect { xhr :post, :create, badge_id: badge.id }.to raise_error
+      expect { xhr :post, :create, badge_id: badge.id }.to raise_error(ActionController::ParameterMissing)
     end
 
     it 'does not allow regular users to grant badges' do
@@ -97,6 +99,13 @@ describe UserBadgesController do
       expect(user_badge).to be_present
       expect(user_badge.granted_by).to eq(Discourse.system_user)
     end
+
+    it 'will trigger :user_badge_granted' do
+      log_in :admin
+      user
+      DiscourseEvent.expects(:trigger).with(:user_badge_granted, anything, anything).once
+      xhr :post, :create, badge_id: badge.id, username: user.username
+    end
   end
 
   context 'destroy' do
@@ -113,6 +122,13 @@ describe UserBadgesController do
       xhr :delete, :destroy, id: user_badge.id
       expect(response.status).to eq(200)
       expect(UserBadge.find_by(id: user_badge.id)).to eq(nil)
+    end
+
+    it 'will trigger :user_badge_removed' do
+      log_in :admin
+
+      DiscourseEvent.expects(:trigger).with(:user_badge_removed, anything, anything).once
+      xhr :delete, :destroy, id: user_badge.id
     end
   end
 end

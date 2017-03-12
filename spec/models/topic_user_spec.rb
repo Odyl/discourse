@@ -1,6 +1,66 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe TopicUser do
+
+  describe "#unwatch_categories!" do
+    it "correctly unwatches categories" do
+
+      op_topic = Fabricate(:topic)
+      another_topic = Fabricate(:topic)
+      tracked_topic = Fabricate(:topic)
+
+      user = op_topic.user
+      watching = TopicUser.notification_levels[:watching]
+      regular = TopicUser.notification_levels[:regular]
+      tracking = TopicUser.notification_levels[:tracking]
+
+      TopicUser.change(user.id, op_topic, notification_level: watching)
+      TopicUser.change(user.id, another_topic, notification_level: watching)
+      TopicUser.change(user.id, tracked_topic, notification_level: watching, total_msecs_viewed: SiteSetting.default_other_auto_track_topics_after_msecs + 1)
+
+      TopicUser.unwatch_categories!(user, [Fabricate(:category).id, Fabricate(:category).id])
+      expect(TopicUser.get(another_topic, user).notification_level).to eq(watching)
+
+      TopicUser.unwatch_categories!(user, [op_topic.category_id])
+
+      expect(TopicUser.get(op_topic, user).notification_level).to eq(watching)
+      expect(TopicUser.get(another_topic, user).notification_level).to eq(regular)
+      expect(TopicUser.get(tracked_topic, user).notification_level).to eq(tracking)
+    end
+
+  end
+
+  describe '#notification_levels' do
+    context "verify enum sequence" do
+      before do
+        @notification_levels = TopicUser.notification_levels
+      end
+
+      it "'muted' should be at 0 position" do
+        expect(@notification_levels[:muted]).to eq(0)
+      end
+
+      it "'watching' should be at 3rd position" do
+        expect(@notification_levels[:watching]).to eq(3)
+      end
+    end
+  end
+
+  describe '#notification_reasons' do
+    context "verify enum sequence" do
+      before do
+        @notification_reasons = TopicUser.notification_reasons
+      end
+
+      it "'created_topic' should be at 1st position" do
+        expect(@notification_reasons[:created_topic]).to eq(1)
+      end
+
+      it "'plugin_changed' should be at 9th position" do
+        expect(@notification_reasons[:plugin_changed]).to eq(9)
+      end
+    end
+  end
 
   it { is_expected.to belong_to :user }
   it { is_expected.to belong_to :topic }
@@ -16,7 +76,12 @@ describe TopicUser do
   let(:topic_creator_user) { TopicUser.get(topic, topic.user) }
 
   let(:post) { Fabricate(:post, topic: topic, user: user) }
-  let(:new_user) { Fabricate(:user, auto_track_topics_after_msecs: 1000) }
+  let(:new_user) {
+    u = Fabricate(:user)
+    u.user_option.update_columns(auto_track_topics_after_msecs: 1000)
+    u
+  }
+
   let(:topic_new_user) { TopicUser.get(topic, new_user)}
   let(:yesterday) { DateTime.now.yesterday }
 
@@ -36,15 +101,15 @@ describe TopicUser do
   describe 'notifications' do
 
     it 'should be set to tracking if auto_track_topics is enabled' do
-      user.update_column(:auto_track_topics_after_msecs, 0)
+      user.user_option.update_column(:auto_track_topics_after_msecs, 0)
       ensure_topic_user
       expect(TopicUser.get(topic, user).notification_level).to eq(TopicUser.notification_levels[:tracking])
     end
 
     it 'should reset regular topics to tracking topics if auto track is changed' do
       ensure_topic_user
-      user.auto_track_topics_after_msecs = 0
-      user.save
+      user.user_option.auto_track_topics_after_msecs = 0
+      user.user_option.save
       expect(topic_user.notification_level).to eq(TopicUser.notification_levels[:tracking])
     end
 
@@ -87,32 +152,28 @@ describe TopicUser do
 
   describe 'visited at' do
 
-    before do
-      TopicUser.track_visit!(topic, user)
-    end
-
     it 'set upon initial visit' do
-      freeze_time yesterday do
-        expect(topic_user.first_visited_at.to_i).to eq(yesterday.to_i)
-        expect(topic_user.last_visited_at.to_i).to eq(yesterday.to_i)
-      end
+      freeze_time yesterday
+
+      TopicUser.track_visit!(topic.id, user.id)
+
+      expect(topic_user.first_visited_at.to_i).to eq(yesterday.to_i)
+      expect(topic_user.last_visited_at.to_i).to eq(yesterday.to_i)
     end
 
     it 'updates upon repeat visit' do
-      today = yesterday.tomorrow
+      freeze_time yesterday
 
-      freeze_time today do
-        TopicUser.track_visit!(topic,user)
-        # reload is a no go
-        topic_user = TopicUser.get(topic,user)
-        expect(topic_user.first_visited_at.to_i).to eq(yesterday.to_i)
-        expect(topic_user.last_visited_at.to_i).to eq(today.to_i)
-      end
-    end
+      TopicUser.track_visit!(topic.id, user.id)
 
-    it 'triggers the observer callbacks when updating' do
-      UserActionObserver.instance.expects(:after_save).twice
-      2.times { TopicUser.track_visit!(topic, user) }
+      freeze_time Time.zone.now
+
+      TopicUser.track_visit!(topic.id, user.id)
+      # reload is a no go
+      topic_user = TopicUser.get(topic,user)
+      expect(topic_user.first_visited_at.to_i).to eq(yesterday.to_i)
+      expect(topic_user.last_visited_at.to_i).to eq(Time.zone.now.to_i)
+
     end
   end
 
@@ -120,35 +181,40 @@ describe TopicUser do
 
     context "without auto tracking" do
 
-      before do
-        TopicUser.update_last_read(user, topic.id, 1, 0)
-      end
-
       let(:topic_user) { TopicUser.get(topic,user) }
 
       it 'should create a new record for a visit' do
-        freeze_time yesterday do
-          expect(topic_user.last_read_post_number).to eq(1)
-          expect(topic_user.last_visited_at.to_i).to eq(yesterday.to_i)
-          expect(topic_user.first_visited_at.to_i).to eq(yesterday.to_i)
-        end
+        freeze_time yesterday
+
+        TopicUser.update_last_read(user, topic.id, 1, 0)
+
+        expect(topic_user.last_read_post_number).to eq(1)
+        expect(topic_user.last_visited_at.to_i).to eq(yesterday.to_i)
+        expect(topic_user.first_visited_at.to_i).to eq(yesterday.to_i)
       end
 
       it 'should update the record for repeat visit' do
-        freeze_time yesterday do
-          Fabricate(:post, topic: topic, user: user)
-          TopicUser.update_last_read(user, topic.id, 2, 0)
-          topic_user = TopicUser.get(topic,user)
-          expect(topic_user.last_read_post_number).to eq(2)
-          expect(topic_user.last_visited_at.to_i).to eq(yesterday.to_i)
-          expect(topic_user.first_visited_at.to_i).to eq(yesterday.to_i)
-        end
+
+        today = Time.zone.now
+        freeze_time Time.zone.now
+
+        TopicUser.update_last_read(user, topic.id, 1, 0)
+
+        tomorrow = 1.day.from_now
+        freeze_time tomorrow
+
+        Fabricate(:post, topic: topic, user: user)
+        TopicUser.update_last_read(user, topic.id, 2, 0)
+        topic_user = TopicUser.get(topic,user)
+
+        expect(topic_user.last_read_post_number).to eq(2)
+        expect(topic_user.last_visited_at.to_i).to eq(today.to_i)
+        expect(topic_user.first_visited_at.to_i).to eq(today.to_i)
       end
     end
 
     context 'private messages' do
       it 'should ensure recepients and senders are watching' do
-        ActiveRecord::Base.observers.enable :all
 
         target_user = Fabricate(:user)
         post = create_post(archetype: Archetype.private_message, target_usernames: target_user.username);
@@ -181,13 +247,13 @@ describe TopicUser do
 
       it 'should automatically track topics after they are read for long enough' do
         expect(topic_new_user.notification_level).to eq(TopicUser.notification_levels[:regular])
-        TopicUser.update_last_read(new_user, topic.id, 2, 1001)
+        TopicUser.update_last_read(new_user, topic.id, 2, SiteSetting.default_other_auto_track_topics_after_msecs + 1)
         expect(TopicUser.get(topic, new_user).notification_level).to eq(TopicUser.notification_levels[:tracking])
       end
 
       it 'should not automatically track topics after they are read for long enough if changed manually' do
         TopicUser.change(new_user, topic, notification_level: TopicUser.notification_levels[:regular])
-        TopicUser.update_last_read(new_user, topic, 2, 1001)
+        TopicUser.update_last_read(new_user, topic, 2, SiteSetting.default_other_auto_track_topics_after_msecs + 1)
         expect(topic_new_user.notification_level).to eq(TopicUser.notification_levels[:regular])
       end
     end
@@ -256,9 +322,14 @@ describe TopicUser do
 
     it "will receive email notification for every topic" do
       user1 = Fabricate(:user)
-      user2 = Fabricate(:user, mailing_list_mode: true)
+
+      SiteSetting.default_email_mailing_list_mode = true
+      SiteSetting.default_email_mailing_list_mode_frequency = 1
+
+      user2 = Fabricate(:user)
       post = create_post
-      user3 = Fabricate(:user, mailing_list_mode: true)
+
+      user3 = Fabricate(:user)
       create_post(topic_id: post.topic_id)
 
       # mails posts from earlier topics

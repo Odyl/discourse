@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'distributed_cache'
 
 describe DistributedCache do
@@ -9,6 +9,35 @@ describe DistributedCache do
 
   let! :cache2 do
     DistributedCache.new("test")
+  end
+
+  it 'allows us to store Set' do
+    c1 = DistributedCache.new("test1")
+    c2 = DistributedCache.new("test1")
+
+    set = Set.new
+    set << 1
+    set << "b"
+    set << 92803984
+    set << 93739739873973
+
+    c1["cats"] = set
+
+    wait_for do
+      c2["cats"] == set
+    end
+
+    expect(c2["cats"]).to eq(set)
+
+    set << 5
+
+    c2["cats"] == set
+
+    wait_for do
+      c1["cats"] == set
+    end
+
+    expect(c1["cats"]).to eq(set)
   end
 
   it 'does not leak state across caches' do

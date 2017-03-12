@@ -1,13 +1,13 @@
-require 'spec_helper'
+require 'rails_helper'
 require_dependency 'jobs/base'
 
 describe Jobs::EnqueueDigestEmails do
 
-
   describe '#target_users' do
 
     context 'disabled digests' do
-      let!(:user_no_digests) { Fabricate(:active_user, email_digests: false, last_emailed_at: 8.days.ago, last_seen_at: 10.days.ago) }
+      before { SiteSetting.stubs(:default_email_digest_frequency).returns(0) }
+      let!(:user_no_digests) { Fabricate(:active_user, last_emailed_at: 8.days.ago, last_seen_at: 10.days.ago) }
 
       it "doesn't return users with email disabled" do
         expect(Jobs::EnqueueDigestEmails.new.target_user_ids.include?(user_no_digests.id)).to eq(false)
@@ -15,21 +15,40 @@ describe Jobs::EnqueueDigestEmails do
     end
 
     context 'unapproved users' do
-      Given!(:unapproved_user) { Fabricate(:active_user, approved: false, last_emailed_at: 8.days.ago, last_seen_at: 10.days.ago) }
-      When { SiteSetting.stubs(:must_approve_users?).returns(true) }
-      Then { expect(Jobs::EnqueueDigestEmails.new.target_user_ids.include?(unapproved_user.id)).to eq(false) }
+      let!(:unapproved_user) { Fabricate(:active_user, approved: false, last_emailed_at: 8.days.ago, last_seen_at: 10.days.ago) }
 
-      # As a moderator
-      And { unapproved_user.update_column(:moderator, true) }
-      And { expect(Jobs::EnqueueDigestEmails.new.target_user_ids.include?(unapproved_user.id)).to eq(true) }
+      before do
+        @original_value = SiteSetting.must_approve_users
+        SiteSetting.must_approve_users = true
+      end
 
-      # As an admin
-      And { unapproved_user.update_attributes(admin: true, moderator: false) }
-      And { expect(Jobs::EnqueueDigestEmails.new.target_user_ids.include?(unapproved_user.id)).to eq(true) }
+      after do
+        SiteSetting.must_approve_users = @original_value
+      end
 
-      # As an approved user
-      And { unapproved_user.update_attributes(admin: false, moderator: false, approved: true ) }
-      And { expect(Jobs::EnqueueDigestEmails.new.target_user_ids.include?(unapproved_user.id)).to eq(true) }
+      it 'should enqueue the right digest emails' do
+        expect(Jobs::EnqueueDigestEmails.new.target_user_ids.include?(unapproved_user.id)).to eq(false)
+
+        # As a moderator
+        unapproved_user.update_column(:moderator, true)
+        expect(Jobs::EnqueueDigestEmails.new.target_user_ids.include?(unapproved_user.id)).to eq(true)
+
+        # As an admin
+        unapproved_user.update_attributes(admin: true, moderator: false)
+        expect(Jobs::EnqueueDigestEmails.new.target_user_ids.include?(unapproved_user.id)).to eq(true)
+
+        # As an approved user
+        unapproved_user.update_attributes(admin: false, moderator: false, approved: true )
+        expect(Jobs::EnqueueDigestEmails.new.target_user_ids.include?(unapproved_user.id)).to eq(true)
+      end
+    end
+
+    context 'staged users' do
+      let!(:staged_user) { Fabricate(:active_user, staged: true, last_emailed_at: 1.year.ago, last_seen_at: 1.year.ago) }
+
+      it "doesn't return staged users" do
+        expect(Jobs::EnqueueDigestEmails.new.target_user_ids.include?(staged_user.id)).to eq(false)
+      end
     end
 
     context 'recently emailed' do
@@ -80,6 +99,15 @@ describe Jobs::EnqueueDigestEmails do
 
       it "returns the user" do
         expect(Jobs::EnqueueDigestEmails.new.target_user_ids).to eq([user.id])
+      end
+    end
+
+    context 'too many bounces' do
+      let!(:bounce_user) { Fabricate(:active_user, last_seen_at: 6.month.ago) }
+
+      it "doesn't return users with too many bounces" do
+        bounce_user.user_stat.update(bounce_score: SiteSetting.bounce_score_threshold + 1)
+        expect(Jobs::EnqueueDigestEmails.new.target_user_ids.include?(bounce_user.id)).to eq(false)
       end
     end
 

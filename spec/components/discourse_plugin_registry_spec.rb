@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'discourse_plugin_registry'
 
 describe DiscoursePluginRegistry do
@@ -29,17 +29,18 @@ describe DiscoursePluginRegistry do
     end
   end
 
-  context '#server_side_javascripts' do
-    it 'defaults to an empty Set' do
-      registry.server_side_javascripts = nil
-      expect(registry.server_side_javascripts).to eq(Set.new)
-    end
-  end
-
   context '#admin_javascripts' do
     it 'defaults to an empty Set' do
       registry.admin_javascripts = nil
       expect(registry.admin_javascripts).to eq(Set.new)
+    end
+  end
+
+  context '#seed_data' do
+    it 'defaults to an empty Set' do
+      registry.seed_data = nil
+      expect(registry.seed_data).to be_a(Hash)
+      expect(registry.seed_data.size).to eq(0)
     end
   end
 
@@ -131,15 +132,22 @@ describe DiscoursePluginRegistry do
 
       expect(registry.admin_javascripts.count).to eq(1)
       expect(registry.javascripts.count).to eq(0)
-      expect(registry.server_side_javascripts.count).to eq(0)
+    end
+  end
+
+  context '#register_seed_data' do
+    let(:registry) { DiscoursePluginRegistry }
+
+    after do
+      registry.reset!
     end
 
-    it "registers server side javascript properly" do
-      registry.register_asset("my_admin.js", :server_side)
+    it "registers seed data properly" do
+      registry.register_seed_data("admin_quick_start_title", "Banana Hosting: Quick Start Guide")
+      registry.register_seed_data("admin_quick_start_filename", File.expand_path("../docs/BANANA-QUICK-START.md", __FILE__))
 
-      expect(registry.server_side_javascripts.count).to eq(1)
-      expect(registry.javascripts.count).to eq(1)
-      expect(registry.admin_javascripts.count).to eq(0)
+      expect(registry.seed_data["admin_quick_start_title"]).to eq("Banana Hosting: Quick Start Guide")
+      expect(registry.seed_data["admin_quick_start_filename"]).to eq(File.expand_path("../docs/BANANA-QUICK-START.md", __FILE__))
     end
   end
 

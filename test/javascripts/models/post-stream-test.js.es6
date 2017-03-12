@@ -1,3 +1,4 @@
+import { blank, present } from 'helpers/qunit-helpers';
 module("model:post-stream");
 
 import createStore from 'helpers/create-store';
@@ -30,6 +31,7 @@ test('appending posts', function() {
   const postStream = buildStream(4567, [1, 3, 4]);
   const store = postStream.store;
 
+  equal(postStream.get('firstPostId'), 1);
   equal(postStream.get('lastPostId'), 4, "the last post id is 4");
 
   ok(!postStream.get('hasPosts'), "there are no posts by default");
@@ -76,6 +78,29 @@ test('closestPostNumberFor', function() {
   equal(postStream.closestPostNumberFor(0), 2, "it clips to the lower bound of the stream");
 });
 
+test('closestDaysAgoFor', function() {
+  const postStream = buildStream(1231);
+  postStream.set('timelineLookup', [[1, 10], [3, 8], [5, 1]]);
+
+  equal(postStream.closestDaysAgoFor(1), 10);
+  equal(postStream.closestDaysAgoFor(2), 10);
+  equal(postStream.closestDaysAgoFor(3), 8);
+  equal(postStream.closestDaysAgoFor(4), 8);
+  equal(postStream.closestDaysAgoFor(5), 1);
+
+  // Out of bounds
+  equal(postStream.closestDaysAgoFor(-1), 10);
+  equal(postStream.closestDaysAgoFor(0), 10);
+  equal(postStream.closestDaysAgoFor(10), 1);
+});
+
+test('closestDaysAgoFor - empty', function() {
+  const postStream = buildStream(1231);
+  postStream.set('timelineLookup', []);
+
+  equal(postStream.closestDaysAgoFor(1), null);
+});
+
 test('updateFromJson', function() {
   const postStream = buildStream(1231);
 
@@ -96,8 +121,8 @@ test("removePosts", function() {
   const store = postStream.store;
 
   const p1 = store.createRecord('post', {id: 1, post_number: 2}),
-      p2 = store.createRecord('post', {id: 2, post_number: 3}),
-      p3 = store.createRecord('post', {id: 3, post_number: 4});
+        p2 = store.createRecord('post', {id: 2, post_number: 3}),
+        p3 = store.createRecord('post', {id: 3, post_number: 4});
 
   postStream.appendPost(p1);
   postStream.appendPost(p2);
@@ -116,7 +141,7 @@ test("removePosts", function() {
 test("cancelFilter", function() {
   const postStream = buildStream(1235);
 
-  sandbox.stub(postStream, "refresh");
+  sandbox.stub(postStream, "refresh").returns(new Ember.RSVP.resolve());
 
   postStream.set('summary', true);
   postStream.cancelFilter();
@@ -140,12 +165,12 @@ test("findPostIdForPostNumber", function() {
 
 test("toggleParticipant", function() {
   const postStream = buildStream(1236);
-  sandbox.stub(postStream, "refresh");
+  sandbox.stub(postStream, "refresh").returns(new Ember.RSVP.resolve());
 
   equal(postStream.get('userFilters.length'), 0, "by default no participants are toggled");
 
   postStream.toggleParticipant(participant.username);
-  ok(postStream.get('userFilters').contains('eviltrout'), 'eviltrout is in the filters');
+  ok(postStream.get('userFilters').includes('eviltrout'), 'eviltrout is in the filters');
 
   postStream.toggleParticipant(participant.username);
   blank(postStream.get('userFilters'), "toggling the participant again removes them");
@@ -153,7 +178,7 @@ test("toggleParticipant", function() {
 
 test("streamFilters", function() {
   const postStream = buildStream(1237);
-  sandbox.stub(postStream, "refresh");
+  sandbox.stub(postStream, "refresh").returns(new Ember.RSVP.resolve());
 
   deepEqual(postStream.get('streamFilters'), {}, "there are no postFilters by default");
   ok(postStream.get('hasNoFilters'), "there are no filters by default");
@@ -165,20 +190,7 @@ test("streamFilters", function() {
   postStream.toggleParticipant(participant.username);
   deepEqual(postStream.get('streamFilters'), {
     username_filters: 'eviltrout',
-    show_deleted: true
-  }, "streamFilters contains the username we filtered and show_deleted");
-
-  postStream.toggleDeleted();
-  deepEqual(postStream.get('streamFilters'), {
-    username_filters: 'eviltrout'
-  }, "streamFilters contains the username we filtered without show_deleted");
-
-  postStream.cancelFilter();
-  postStream.toggleDeleted();
-  deepEqual(postStream.get('streamFilters'), {
-    show_deleted: true
-  }, "streamFilters show_deleted only");
-
+  }, "streamFilters contains the username we filtered");
 });
 
 test("loading", function() {
@@ -248,66 +260,39 @@ test("storePost", function() {
   const postWithoutId = store.createRecord('post', {raw: 'hello world'});
   stored = postStream.storePost(postWithoutId);
   equal(stored, postWithoutId, "it returns the same post back");
-  equal(postStream.get('postIdentityMap.size'), 1, "it does not add a new entry into the identity map");
 
 });
 
 test("identity map", function() {
-  const postStream = buildStream(1234),
-        store = postStream.store;
+  const postStream = buildStream(1234);
+  const store = postStream.store;
 
   const p1 = postStream.appendPost(store.createRecord('post', {id: 1, post_number: 1}));
-  postStream.appendPost(store.createRecord('post', {id: 3, post_number: 4}));
+  const p3 = postStream.appendPost(store.createRecord('post', {id: 3, post_number: 4}));
 
   equal(postStream.findLoadedPost(1), p1, "it can return cached posts by id");
   blank(postStream.findLoadedPost(4), "it can't find uncached posts");
 
-  deepEqual(postStream.listUnloadedIds([10, 11, 12]), [10, 11, 12], "it returns a list of all unloaded ids");
-  blank(postStream.listUnloadedIds([1, 3]), "if we have loaded all posts it's blank");
-  deepEqual(postStream.listUnloadedIds([1, 2, 3, 4]), [2, 4], "it only returns unloaded posts");
-});
-
-asyncTestDiscourse("loadIntoIdentityMap with no data", function() {
-  const postStream = buildStream(1234);
-  expect(1);
-
-  sandbox.stub(Discourse, "ajax");
-  postStream.loadIntoIdentityMap([]).then(function() {
-    ok(!Discourse.ajax.calledOnce, "an empty array returned a promise yet performed no ajax request");
-    start();
+  // Find posts by ids uses the identity map
+  postStream.findPostsByIds([1, 2, 3]).then(result => {
+    equal(result.length, 3);
+    equal(result.objectAt(0), p1);
+    equal(result.objectAt(1).get('post_number'), 2);
+    equal(result.objectAt(2), p3);
   });
 });
 
-asyncTestDiscourse("loadIntoIdentityMap with post ids", function() {
+test("loadIntoIdentityMap with no data", () => {
+  return buildStream(1234).loadIntoIdentityMap([]).then(result => {
+    equal(result.length, 0, 'requesting no posts produces no posts');
+  });
+});
+
+test("loadIntoIdentityMap with post ids", function() {
   const postStream = buildStream(1234);
-  expect(1);
 
-  sandbox.stub(Discourse, "ajax").returns(Ember.RSVP.resolve({
-    post_stream: {
-      posts: [{id: 10, post_number: 10}]
-    }
-  }));
-
-  postStream.loadIntoIdentityMap([10]).then(function() {
+  return postStream.loadIntoIdentityMap([10]).then(function() {
     present(postStream.findLoadedPost(10), "it adds the returned post to the store");
-    start();
-  });
-});
-
-asyncTestDiscourse("loading a post's history", function() {
-  const postStream = buildStream(1234);
-  const store = postStream.store;
-  expect(3);
-
-  const post = store.createRecord('post', {id: 4321});
-  const secondPost = store.createRecord('post', {id: 2222});
-
-  sandbox.stub(Discourse, "ajax").returns(Ember.RSVP.resolve([secondPost]));
-  postStream.findReplyHistory(post).then(function() {
-    ok(Discourse.ajax.calledOnce, "it made the ajax request");
-    present(postStream.findLoadedPost(2222), "it stores the returned post in the identity map");
-    present(post.get('replyHistory'), "it sets the replyHistory attribute for the post");
-    start();
   });
 });
 
@@ -315,7 +300,9 @@ test("staging and undoing a new post", function() {
   const postStream = buildStream(10101, [1]);
   const store = postStream.store;
 
-  postStream.appendPost(store.createRecord('post', {id: 1, post_number: 1, topic_id: 10101}));
+  const original = store.createRecord('post', {id: 1, post_number: 1, topic_id: 10101});
+  postStream.appendPost(original);
+  ok(postStream.get('lastAppended'), original, "the original post is lastAppended");
 
   const user = Discourse.User.create({username: 'eviltrout', name: 'eviltrout', id: 321});
   const stagedPost = store.createRecord('post', { raw: 'hello world this is my new post', topic_id: 10101 });
@@ -331,6 +318,7 @@ test("staging and undoing a new post", function() {
   equal(result, "staged", "it returns staged");
   equal(topic.get('highest_post_number'), 2, "it updates the highest_post_number");
   ok(postStream.get('loading'), "it is loading while the post is being staged");
+  ok(postStream.get('lastAppended'), original, "it doesn't consider staged posts as the lastAppended");
 
   equal(topic.get('posts_count'), 2, "it increases the post count");
   present(topic.get('last_posted_at'), "it updates last_posted_at");
@@ -339,7 +327,7 @@ test("staging and undoing a new post", function() {
   equal(stagedPost.get('topic'), topic, "it assigns the topic reference");
   equal(stagedPost.get('post_number'), 2, "it is assigned the probable post_number");
   present(stagedPost.get('created_at'), "it is assigned a created date");
-  ok(postStream.get('posts').contains(stagedPost), "the post is added to the stream");
+  ok(postStream.get('posts').includes(stagedPost), "the post is added to the stream");
   equal(stagedPost.get('id'), -1, "the post has a magical -1 id");
 
   // Undoing a created post (there was an error)
@@ -349,14 +337,18 @@ test("staging and undoing a new post", function() {
   equal(topic.get('highest_post_number'), 1, "it reverts the highest_post_number");
   equal(topic.get('posts_count'), 1, "it reverts the post count");
   equal(postStream.get('filteredPostsCount'), 1, "it retains the filteredPostsCount");
-  ok(!postStream.get('posts').contains(stagedPost), "the post is removed from the stream");
+  ok(!postStream.get('posts').includes(stagedPost), "the post is removed from the stream");
+  ok(postStream.get('lastAppended'), original, "it doesn't consider undid post lastAppended");
 });
 
 test("staging and committing a post", function() {
   const postStream = buildStream(10101, [1]);
   const store = postStream.store;
 
-  postStream.appendPost(store.createRecord('post', {id: 1, post_number: 1, topic_id: 10101}));
+  const original = store.createRecord('post', {id: 1, post_number: 1, topic_id: 10101});
+  postStream.appendPost(original);
+  ok(postStream.get('lastAppended'), original, "the original post is lastAppended");
+
   const user = Discourse.User.create({username: 'eviltrout', name: 'eviltrout', id: 321});
   const stagedPost = store.createRecord('post', { raw: 'hello world this is my new post', topic_id: 10101 });
 
@@ -372,9 +364,10 @@ test("staging and committing a post", function() {
 
   result = postStream.stagePost(stagedPost, user);
   equal(result, "alreadyStaging", "you can't stage a post while it is currently staging");
+  ok(postStream.get('lastAppended'), original, "staging a post doesn't change the lastAppended");
 
   postStream.commitPost(stagedPost);
-  ok(postStream.get('posts').contains(stagedPost), "the post is still in the stream");
+  ok(postStream.get('posts').includes(stagedPost), "the post is still in the stream");
   ok(!postStream.get('loading'), "it is no longer loading");
 
   equal(postStream.get('filteredPostsCount'), 2, "it increases the filteredPostsCount");
@@ -383,38 +376,8 @@ test("staging and committing a post", function() {
   present(found, "the post is in the identity map");
   ok(postStream.indexOf(stagedPost) > -1, "the post is in the stream");
   equal(found.get('raw'), 'different raw value', 'it also updated the value in the stream');
-
+  ok(postStream.get('lastAppended'), found, "comitting a post changes lastAppended");
 });
-
-test('triggerNewPostInStream', function() {
-  const postStream = buildStream(225566);
-  const store = postStream.store;
-
-  sandbox.stub(postStream, 'appendMore');
-  sandbox.stub(postStream, 'refresh');
-
-  postStream.triggerNewPostInStream(null);
-  ok(!postStream.appendMore.calledOnce, "asking for a null id does nothing");
-
-  postStream.toggleSummary();
-  postStream.triggerNewPostInStream(1);
-  ok(!postStream.appendMore.calledOnce, "it will not trigger when summary is active");
-
-  postStream.cancelFilter();
-  postStream.toggleParticipant('eviltrout');
-  postStream.triggerNewPostInStream(1);
-  ok(!postStream.appendMore.calledOnce, "it will not trigger when a participant filter is active");
-
-  postStream.cancelFilter();
-  postStream.triggerNewPostInStream(1);
-  ok(!postStream.appendMore.calledOnce, "it wont't delegate to appendMore because the last post is not loaded");
-
-  postStream.cancelFilter();
-  postStream.appendPost(store.createRecord('post', {id: 1, post_number: 2}));
-  postStream.triggerNewPostInStream(2);
-  ok(postStream.appendMore.calledOnce, "delegates to appendMore because the last post is loaded");
-});
-
 
 test("loadedAllPosts when the id changes", function() {
   // This can happen in a race condition between staging a post and it coming through on the
@@ -451,3 +414,45 @@ test("comitting and triggerNewPostInStream race condition", function() {
   equal(postStream.get('filteredPostsCount'), 1, "it does not add the same post twice");
 });
 
+test("postsWithPlaceholders", () => {
+  const postStream = buildStream(4964, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  const postsWithPlaceholders = postStream.get('postsWithPlaceholders');
+  const store = postStream.store;
+
+  const testProxy = Ember.ArrayProxy.create({ content: postsWithPlaceholders });
+
+  const p1 = store.createRecord('post', {id: 1, post_number: 1});
+  const p2 = store.createRecord('post', {id: 2, post_number: 2});
+  const p3 = store.createRecord('post', {id: 3, post_number: 3});
+  const p4 = store.createRecord('post', {id: 4, post_number: 4});
+
+  postStream.appendPost(p1);
+  postStream.appendPost(p2);
+  postStream.appendPost(p3);
+
+  // Test enumerable and array access
+  equal(postsWithPlaceholders.get('length'), 3);
+  equal(testProxy.get('length'), 3);
+  equal(postsWithPlaceholders.nextObject(0), p1);
+  equal(postsWithPlaceholders.objectAt(0), p1);
+  equal(postsWithPlaceholders.nextObject(1, p1), p2);
+  equal(postsWithPlaceholders.objectAt(1), p2);
+  equal(postsWithPlaceholders.nextObject(2, p2), p3);
+  equal(postsWithPlaceholders.objectAt(2), p3);
+
+  const promise = postStream.appendMore();
+  equal(postsWithPlaceholders.get('length'), 8, 'we immediately have a larger placeholder window');
+  equal(testProxy.get('length'), 8);
+  ok(!!postsWithPlaceholders.nextObject(3, p3));
+  ok(!!postsWithPlaceholders.objectAt(4));
+  ok(postsWithPlaceholders.objectAt(3) !== p4);
+  ok(testProxy.objectAt(3) !== p4);
+
+  return promise.then(() => {
+    equal(postsWithPlaceholders.objectAt(3), p4);
+    equal(postsWithPlaceholders.get('length'), 8, 'have a larger placeholder window when loaded');
+    equal(testProxy.get('length'), 8);
+    equal(testProxy.objectAt(3), p4);
+  });
+
+});

@@ -1,3 +1,4 @@
+import computed from "ember-addons/ember-computed-decorators";
 import UploadMixin from "discourse/mixins/upload";
 
 export default Em.Component.extend(UploadMixin, {
@@ -5,17 +6,27 @@ export default Em.Component.extend(UploadMixin, {
   tagName: "span",
   imageIsNotASquare: false,
 
-  uploadButtonText: function() {
-    return this.get("uploading") ? I18n.t("uploading") : I18n.t("user.change_avatar.upload_picture");
-  }.property("uploading"),
+  @computed("uploading")
+  uploadButtonText(uploading) {
+    return uploading ? I18n.t("uploading") : I18n.t("user.change_avatar.upload_picture");
+  },
+
+  validateUploadedFilesOptions() {
+    return { imagesOnly: true };
+  },
 
   uploadDone(upload) {
     this.setProperties({
       imageIsNotASquare: upload.width !== upload.height,
       uploadedAvatarTemplate: upload.url,
-      custom_avatar_upload_id: upload.id,
+      uploadedAvatarId: upload.id,
     });
 
     this.sendAction("done");
+  },
+
+  @computed("user_id")
+  data(user_id) {
+    return { user_id };
   }
 });

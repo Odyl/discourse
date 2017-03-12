@@ -4,9 +4,9 @@ class UserActionsController < ApplicationController
     params.require(:username)
     params.permit(:filter, :offset)
 
-    per_chunk = 60
+    per_chunk = 30
 
-    user = fetch_user_from_params
+    user = fetch_user_from_params(include_inactive: current_user.try(:staff?))
 
     opts = { user_id: user.id,
              user: user,
@@ -24,7 +24,21 @@ class UserActionsController < ApplicationController
       UserAction.stream(opts)
     end
 
-    render_serialized(stream, UserActionSerializer, root: "user_actions")
+    stream = stream.to_a
+    if stream.length == 0 && (help_key = params['no_results_help_key'])
+      if user.id == guardian.user.try(:id)
+        help_key += ".self"
+      else
+        help_key += ".others"
+      end
+      render json: {
+        user_action: [],
+        no_results_help: I18n.t(help_key)
+      }
+    else
+      render_serialized(stream, UserActionSerializer, root: 'user_actions')
+    end
+
   end
 
   def show
@@ -34,6 +48,7 @@ class UserActionsController < ApplicationController
 
   def private_messages
     # DO NOT REMOVE
+    # TODO should preload messages to avoid extra http req
   end
 
 end

@@ -14,15 +14,15 @@
 .edits {margin-right: 5px;}
 
 #topic-title {
-  margin-bottom: 20px;
-  margin: 0 60px 10px 20px;
+  //margin-bottom: 20px;
+  margin: 0 60px 10px 0;
   h1 {
     font-size: 1.5em;
     line-height: 1.25em;
-    margin: 0;
     a {
       color: $primary;
       vertical-align: middle;
+      word-wrap: break-word;
     }
   }
   .title-category-wrapper {
@@ -31,16 +31,16 @@
   .private-message-glyph { display: none; }
 }
 
-.private-message-glyph { color: scale-color($primary, $lightness: 75%); }
+.private-message-glyph { color: dark-light-choose(scale-color($primary, $lightness: 75%), scale-color($secondary, $lightness: 25%)); }
 .private_message #topic-title .private-message-glyph { display: inline; }
 
 
 /* both blocks that appear under the standard post control buttons */
 .notification-options, .pinned-options {
-  clear: both;
   float: left;
   margin-top: 0px;
   padding-top: 1px;
+  clear: both;
 }
 
 #topic-closing-info {
@@ -56,20 +56,18 @@
   width: 0;
   right: 0;
   bottom: 0;
-  z-index: 500;
-  margin-right: 145px;
+  z-index: 950;
+  margin-right: 148px;
 }
 
 #topic-progress-expanded {
-  border: 1px solid scale-color-diff();
+  border: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
   padding: 5px;
   background: $secondary;
-  box-shadow: 0 0px 2px rgba(0,0,0, .2);
 
   position: absolute;
   bottom: 34px;
-  width: 133px;
-  padding: 5px;
+  width: 135px;
 
   button.full {
     width: 100%;
@@ -93,6 +91,9 @@
       float: right !important;
       width: 55px;
     }
+  }
+  button.btn.jump-prompt {
+    margin: 0;
   }
   button.btn.jump-bottom {
     margin-top: 5px;
@@ -164,7 +165,7 @@
   position: absolute;
 }
 
-.post-cloak:last-of-type {padding-bottom: 40px;}
+.topic-post:last-of-type {padding-bottom: 40px;}
 
 .heatmap-high {color: scale-color($danger, $lightness: -25%) !important;}
 .heatmap-med {color: $danger !important;}
@@ -186,4 +187,10 @@ sup sup, sub sup, sup sub, sub sub { top: 0; }
     margin-top: 8px;
     width: 95% !important;
   }
+}
+
+// make mobile timeline top and bottom dates easier to select
+.topic-timeline { 
+  .start-date { font-size: 110%; padding: 5px; }
+  .now-date { font-size: 110%; padding: 5px; }
 }

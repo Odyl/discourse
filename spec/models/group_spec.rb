@@ -1,6 +1,24 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe Group do
+  let(:admin) { Fabricate(:admin) }
+  let(:user) { Fabricate(:user) }
+
+  describe '#builtin' do
+    context "verify enum sequence" do
+      before do
+        @builtin = Group.builtin
+      end
+
+      it "'moderators' should be at 1st position" do
+        expect(@builtin[:moderators]).to eq(1)
+      end
+
+      it "'trust_level_2' should be at 4th position" do
+        expect(@builtin[:trust_level_2]).to eq(4)
+      end
+    end
+  end
 
   # UGLY but perf is horrible with this callback
   before do
@@ -32,6 +50,31 @@ describe Group do
       build(:group, name: 'this_is_a_name').save
       group.name = 'This_Is_A_Name'
       expect(group.valid?).to eq false
+    end
+
+    it "is invalid for poorly formatted domains" do
+      group.automatic_membership_email_domains = "wikipedia.org|*@example.com"
+      expect(group.valid?).to eq false
+    end
+
+    it "is valid for proper domains" do
+      group.automatic_membership_email_domains = "discourse.org|wikipedia.org"
+      expect(group.valid?).to eq true
+    end
+
+    it "is valid for newer TLDs" do
+      group.automatic_membership_email_domains = "discourse.institute"
+      expect(group.valid?).to eq true
+    end
+
+    it "is invalid for bad incoming email" do
+      group.incoming_email = "foo.bar.org"
+      expect(group.valid?).to eq(false)
+    end
+
+    it "is valid for proper incoming email" do
+      group.incoming_email = "foo@bar.org"
+      expect(group.valid?).to eq(true)
     end
   end
 
@@ -111,6 +154,44 @@ describe Group do
     user.reload
     expect(user.title).to eq nil
 
+  end
+
+  describe '.refresh_automatic_group!' do
+    it "makes sure the everyone group is not visible" do
+      g = Group.refresh_automatic_group!(:everyone)
+      expect(g.visible).to eq(false)
+    end
+
+    it "uses the localized name if name has not been taken" do
+      begin
+        default_locale = SiteSetting.default_locale
+        I18n.locale = SiteSetting.default_locale = 'de'
+
+        group = Group.refresh_automatic_group!(:staff)
+
+        expect(group.name).to_not eq('staff')
+        expect(group.name).to eq(I18n.t('groups.default_names.staff'))
+      ensure
+        I18n.locale = SiteSetting.default_locale = default_locale
+      end
+    end
+
+    it "does not use the localized name if name has already been taken" do
+      begin
+        default_locale = SiteSetting.default_locale
+        I18n.locale = SiteSetting.default_locale = 'de'
+
+        another_group = Fabricate(:group,
+          name: I18n.t('groups.default_names.staff').upcase
+        )
+
+        group = Group.refresh_automatic_group!(:staff)
+
+        expect(group.name).to eq('staff')
+      ensure
+        I18n.locale = SiteSetting.default_locale = default_locale
+      end
+    end
   end
 
   it "Correctly handles removal of primary group" do
@@ -198,20 +279,20 @@ describe Group do
     groups = Group.includes(:users).to_a
     expect(groups.count).to eq Group::AUTO_GROUPS.count
 
-    g = groups.find{|g| g.id == Group::AUTO_GROUPS[:admins]}
+    g = groups.find{|grp| grp.id == Group::AUTO_GROUPS[:admins]}
     expect(g.users.count).to eq 2
     expect(g.user_count).to eq 2
 
-    g = groups.find{|g| g.id == Group::AUTO_GROUPS[:staff]}
+    g = groups.find{|grp| grp.id == Group::AUTO_GROUPS[:staff]}
     expect(g.users.count).to eq 2
     expect(g.user_count).to eq 2
 
-    g = groups.find{|g| g.id == Group::AUTO_GROUPS[:trust_level_1]}
+    g = groups.find{|grp| grp.id == Group::AUTO_GROUPS[:trust_level_1]}
     # admin, system and user
     expect(g.users.count).to eq 3
     expect(g.user_count).to eq 3
 
-    g = groups.find{|g| g.id == Group::AUTO_GROUPS[:trust_level_2]}
+    g = groups.find{|grp| grp.id == Group::AUTO_GROUPS[:trust_level_2]}
     # system and user
     expect(g.users.count).to eq 2
     expect(g.user_count).to eq 2
@@ -276,7 +357,6 @@ describe Group do
     expect(Group.desired_trust_level_groups(2).sort).to eq [10,11,12]
   end
 
-
   it "correctly handles trust level changes" do
     user = Fabricate(:user, trust_level: 2)
     Group.user_trust_level_change!(user.id, 2)
@@ -292,23 +372,82 @@ describe Group do
     let(:group) {Fabricate(:group)}
 
     it "by default has no managers" do
-      expect(group.managers).to be_empty
+      expect(group.group_users.where('group_users.owner')).to be_empty
     end
 
     it "multiple managers can be appointed" do
       2.times do |i|
         u = Fabricate(:user)
-        group.appoint_manager(u)
+        group.add_owner(u)
       end
-      expect(group.managers.count).to eq(2)
+      expect(group.group_users.where('group_users.owner').count).to eq(2)
     end
 
     it "manager has authority to edit membership" do
       u = Fabricate(:user)
       expect(Guardian.new(u).can_edit?(group)).to be_falsy
-      group.appoint_manager(u)
+      group.add_owner(u)
       expect(Guardian.new(u).can_edit?(group)).to be_truthy
     end
   end
 
+  it "correctly grants a trust level to members" do
+    group = Fabricate(:group, grant_trust_level: 2)
+    u0 = Fabricate(:user, trust_level: 0)
+    u3 = Fabricate(:user, trust_level: 3)
+
+    group.add(u0)
+    expect(u0.reload.trust_level).to eq(2)
+
+    group.add(u3)
+    expect(u3.reload.trust_level).to eq(3)
+  end
+
+  it 'should cook the bio' do
+    group = Fabricate(:group)
+    group.update_attributes!(bio_raw: 'This is a group for :unicorn: lovers')
+
+    expect(group.bio_cooked).to include("unicorn.png")
+  end
+
+  describe ".visible_groups" do
+    let(:group) { Fabricate(:group, visible: false) }
+    let(:group_2) { Fabricate(:group, visible: true) }
+    let(:admin) { Fabricate(:admin) }
+    let(:user) { Fabricate(:user) }
+
+    before do
+      group
+      group_2
+    end
+
+    describe 'when user is an admin' do
+      it 'should return the right groups' do
+        expect(Group.visible_groups(admin).pluck(:id).sort)
+          .to eq([group.id, group_2.id].concat(Group::AUTO_GROUP_IDS.keys - [0]).sort)
+      end
+    end
+
+    describe 'when user is owner of a group' do
+      it 'should return the right groups' do
+        group.add_owner(user)
+
+        expect(Group.visible_groups(user).pluck(:id).sort)
+          .to eq([group.id, group_2.id])
+      end
+    end
+
+    describe 'when user is not the owner of any group' do
+      it 'should return the right groups' do
+        expect(Group.visible_groups(user).pluck(:id).sort)
+          .to eq([group_2.id])
+      end
+    end
+
+    describe 'user is nil' do
+      it 'should return the right groups' do
+        expect(Group.visible_groups(nil).pluck(:id).sort).to eq([group_2.id])
+      end
+    end
+  end
 end

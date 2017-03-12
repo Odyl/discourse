@@ -18,6 +18,8 @@ class UserAction < ActiveRecord::Base
   NEW_PRIVATE_MESSAGE = 12
   GOT_PRIVATE_MESSAGE = 13
   PENDING = 14
+  SOLVED = 15
+  ASSIGNED = 16
 
   ORDER = Hash[*[
     GOT_PRIVATE_MESSAGE,
@@ -31,7 +33,9 @@ class UserAction < ActiveRecord::Base
     MENTION,
     QUOTE,
     BOOKMARK,
-    EDIT
+    EDIT,
+    SOLVED,
+    ASSIGNED,
   ].each_with_index.to_a.flatten]
 
   # note, this is temporary until we upgrade to rails 4
@@ -78,14 +82,41 @@ SQL
 
   def self.private_messages_stats(user_id, guardian)
     return unless guardian.can_see_private_messages?(user_id)
-    # list the stats for: all/mine/unread (topic-based)
-    private_messages = Topic.where("topics.id IN (SELECT topic_id FROM topic_allowed_users WHERE user_id = #{user_id})")
-                            .joins("LEFT OUTER JOIN topic_users AS tu ON (topics.id = tu.topic_id AND tu.user_id = #{user_id})")
-                            .private_messages
-    all = private_messages.count
-    mine = private_messages.where(user_id: user_id).count
-    unread = private_messages.where("tu.last_read_post_number IS NULL OR tu.last_read_post_number < topics.highest_post_number").count
-    { all: all, mine: mine, unread: unread }
+
+    # list the stats for: all/mine/unread/groups (topic-based)
+
+    sql = <<-SQL
+      SELECT COUNT(*) "all"
+           , SUM(CASE WHEN t.user_id = :user_id THEN 1 ELSE 0 END) "mine"
+           , SUM(CASE WHEN tu.last_read_post_number IS NULL OR tu.last_read_post_number < t.highest_post_number THEN 1 ELSE 0 END) "unread"
+        FROM topics t
+   LEFT JOIN topic_users tu ON t.id = tu.topic_id AND tu.user_id = :user_id
+       WHERE t.deleted_at IS NULL
+         AND t.archetype = 'private_message'
+         AND t.id IN (SELECT topic_id FROM topic_allowed_users WHERE user_id = :user_id)
+    SQL
+
+    all, mine, unread = exec_sql(sql, user_id: user_id).values[0].map(&:to_i)
+
+    sql = <<-SQL
+      SELECT  g.name, COUNT(*) "count"
+        FROM topics t
+        JOIN topic_allowed_groups tg ON topic_id = t.id
+        JOIN group_users gu ON gu.user_id = :user_id AND gu.group_id = tg.group_id
+        JOIN groups g ON g.id = gu.group_id
+       WHERE deleted_at IS NULL
+         AND archetype = 'private_message'
+       GROUP BY g.name
+    SQL
+
+    result = { all: all, mine: mine, unread: unread}
+
+    exec_sql(sql, user_id: user_id).each do |row|
+      (result[:groups] ||= []) << {name: row["name"], count: row["count"].to_i}
+    end
+
+    result
+
   end
 
   def self.stream_item(action_id, guardian)
@@ -154,6 +185,7 @@ SQL
         CASE WHEN coalesce(p.deleted_at, p2.deleted_at, t.deleted_at) IS NULL THEN false ELSE true END deleted,
         p.hidden,
         p.post_type,
+        p.action_code,
         p.edit_reason,
         t.category_id
       FROM user_actions as a
@@ -214,9 +246,12 @@ SQL
         action.save!
 
         user_id = hash[:user_id]
-        update_like_count(user_id, hash[:action_type], 1)
 
         topic = Topic.includes(:category).find_by(id: hash[:target_topic_id])
+
+        if topic && !topic.private_message?
+          update_like_count(user_id, hash[:action_type], 1)
+        end
 
         # move into Topic perhaps
         group_ids = nil
@@ -244,7 +279,9 @@ SQL
       MessageBus.publish("/user/#{hash[:user_id]}", {user_action_id: action.id, remove: true})
     end
 
-    update_like_count(hash[:user_id], hash[:action_type], -1)
+    if !Topic.where(id: hash[:target_topic_id], archetype: Archetype.private_message).exists?
+      update_like_count(hash[:user_id], hash[:action_type], -1)
+    end
   end
 
   def self.synchronize_target_topic_ids(post_ids = nil)
@@ -295,7 +332,6 @@ SQL
   end
 
   def self.apply_common_filters(builder,user_id,guardian,ignore_private_messages=false)
-
     # We never return deleted topics in activity
     builder.where("t.deleted_at is null")
 
@@ -308,17 +344,36 @@ SQL
       builder.where("NOT COALESCE(p.hidden, false) OR p.user_id = :current_user_id", current_user_id: current_user_id )
     end
 
+    visible_post_types = Topic.visible_post_types(guardian.user)
+    builder.where("COALESCE(p.post_type, p2.post_type) IN (:visible_post_types)", visible_post_types: visible_post_types)
+
     unless (guardian.user && guardian.user.id == user_id) || guardian.is_staff?
-      builder.where("a.action_type not in (#{BOOKMARK})")
       builder.where("t.visible")
     end
 
     unless guardian.can_see_notifications?(User.where(id: user_id).first)
+      builder.where("a.action_type not in (#{BOOKMARK})")
       builder.where('a.action_type <> :pending', pending: UserAction::PENDING)
     end
 
-    if !guardian.can_see_private_messages?(user_id) || ignore_private_messages
-      builder.where("t.archetype != :archetype", archetype: Archetype::private_message)
+    if !guardian.can_see_private_messages?(user_id) || ignore_private_messages || !guardian.user
+      builder.where("t.archetype <> :private_message", private_message: Archetype::private_message)
+    else
+      unless guardian.is_admin?
+        sql = <<~SQL
+        t.archetype <> :private_message OR
+        EXISTS (
+          SELECT 1 FROM topic_allowed_users tu WHERE tu.topic_id = t.id AND tu.user_id = :current_user_id
+        ) OR
+        EXISTS (
+          SELECT 1 FROM topic_allowed_groups tg WHERE tg.topic_id = t.id AND tg.group_id IN (
+            SELECT group_id FROM group_users gu WHERE gu.user_id = :current_user_id
+          )
+        )
+        SQL
+
+        builder.where(sql, private_message: Archetype::private_message, current_user_id: guardian.user.id)
+      end
     end
 
     unless guardian.is_admin?
@@ -353,10 +408,13 @@ end
 #  acting_user_id  :integer
 #  created_at      :datetime         not null
 #  updated_at      :datetime         not null
+#  queued_post_id  :integer
 #
 # Indexes
 #
 #  idx_unique_rows                                (action_type,user_id,target_topic_id,target_post_id,acting_user_id) UNIQUE
+#  idx_user_actions_speed_up_user_all             (user_id,created_at,action_type)
 #  index_user_actions_on_acting_user_id           (acting_user_id)
+#  index_user_actions_on_target_post_id           (target_post_id)
 #  index_user_actions_on_user_id_and_action_type  (user_id,action_type)
 #

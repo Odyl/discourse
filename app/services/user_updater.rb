@@ -1,49 +1,63 @@
 class UserUpdater
 
   CATEGORY_IDS = {
+    watched_first_post_category_ids: :watching_first_post,
     watched_category_ids: :watching,
     tracked_category_ids: :tracking,
     muted_category_ids: :muted
   }
 
-  USER_ATTR = [
-    :email_digests,
+  TAG_NAMES = {
+    watching_first_post_tags: :watching_first_post,
+    watched_tags: :watching,
+    tracked_tags: :tracking,
+    muted_tags: :muted
+  }
+
+  OPTION_ATTR = [
     :email_always,
+    :mailing_list_mode,
+    :mailing_list_mode_frequency,
+    :email_digests,
     :email_direct,
     :email_private_messages,
     :external_links_in_new_tab,
     :enable_quoting,
     :dynamic_favicon,
-    :mailing_list_mode,
     :disable_jump_reply,
-    :edit_history_public
+    :automatically_unpin_topics,
+    :digest_after_minutes,
+    :new_topic_duration_minutes,
+    :auto_track_topics_after_msecs,
+    :notification_level_when_replying,
+    :email_previous_replies,
+    :email_in_reply_to,
+    :like_notification_frequency,
+    :include_tl0_in_digests
   ]
 
   def initialize(actor, user)
     @user = user
     @guardian = Guardian.new(actor)
+    @actor = actor
   end
 
   def update(attributes = {})
     user_profile = user.user_profile
-    user_profile.location = attributes[:location]
+    user_profile.location = attributes.fetch(:location) { user_profile.location }
     user_profile.dismissed_banner_key = attributes[:dismissed_banner_key] if attributes[:dismissed_banner_key].present?
     user_profile.website = format_url(attributes.fetch(:website) { user_profile.website })
-    user_profile.bio_raw = attributes.fetch(:bio_raw) { user_profile.bio_raw }
+    unless SiteSetting.enable_sso && SiteSetting.sso_overrides_bio
+      user_profile.bio_raw = attributes.fetch(:bio_raw) { user_profile.bio_raw }
+    end
     user_profile.profile_background = attributes.fetch(:profile_background) { user_profile.profile_background }
     user_profile.card_background = attributes.fetch(:card_background) { user_profile.card_background }
 
+    old_user_name = user.name.present? ? user.name : ""
     user.name = attributes.fetch(:name) { user.name }
+
     user.locale = attributes.fetch(:locale) { user.locale }
-    user.digest_after_days = attributes.fetch(:digest_after_days) { user.digest_after_days }
-
-    if attributes[:auto_track_topics_after_msecs]
-      user.auto_track_topics_after_msecs = attributes[:auto_track_topics_after_msecs].to_i
-    end
-
-    if attributes[:new_topic_duration_minutes]
-      user.new_topic_duration_minutes = attributes[:new_topic_duration_minutes].to_i
-    end
+    user.date_of_birth = attributes.fetch(:date_of_birth) { user.date_of_birth }
 
     if guardian.can_grant_title?(user)
       user.title = attributes.fetch(:title) { user.title }
@@ -55,11 +69,27 @@ class UserUpdater
       end
     end
 
-    USER_ATTR.each do |attribute|
-      if attributes[attribute].present?
-        user.send("#{attribute}=", attributes[attribute] == 'true')
+    TAG_NAMES.each do |attribute, level|
+      TagUser.batch_set(user, level, attributes[attribute])
+    end
+
+    save_options = false
+
+    OPTION_ATTR.each do |attribute|
+      if attributes.key?(attribute)
+        save_options = true
+
+        if [true, false].include?(user.user_option.send(attribute))
+          val = attributes[attribute].to_s == 'true'
+          user.user_option.send("#{attribute}=", val)
+        else
+          user.user_option.send("#{attribute}=", attributes[attribute])
+        end
       end
     end
+
+    # automatically disable digests when mailing_list_mode is enabled
+    user.user_option.email_digests = false if user.user_option.mailing_list_mode
 
     fields = attributes[:custom_fields]
     if fields.present?
@@ -71,7 +101,18 @@ class UserUpdater
         update_muted_users(attributes[:muted_usernames])
       end
 
-      user_profile.save && user.save
+      saved = (!save_options || user.user_option.save) && user_profile.save && user.save
+      if saved
+        DiscourseEvent.trigger(:user_updated, user)
+
+        # log name changes
+        if attributes[:name].present? && old_user_name.downcase != attributes.fetch(:name).downcase
+          StaffActionLogger.new(@actor).log_name_change(user.id, old_user_name, attributes.fetch(:name))
+        elsif attributes[:name].blank? && old_user_name.present?
+          StaffActionLogger.new(@actor).log_name_change(user.id, old_user_name, "")
+        end
+      end
+      saved
     end
   end
 
@@ -103,6 +144,7 @@ class UserUpdater
   attr_reader :user, :guardian
 
   def format_url(website)
+    return nil if website.blank?
     website =~ /^http/ ? website : "http://#{website}"
   end
 end

@@ -1,5 +1,4 @@
 class Backup
-  include UrlHelper
   include ActiveModel::SerializerSupport
 
   attr_reader :filename
@@ -35,7 +34,7 @@ class Backup
   end
 
   def after_remove_hook
-    remove_from_s3 if SiteSetting.enable_s3_backups?
+    remove_from_s3 if SiteSetting.enable_s3_backups? && !SiteSetting.s3_disable_cleanup?
   end
 
   def s3_bucket
@@ -62,7 +61,9 @@ class Backup
   end
 
   def self.base_directory
-    File.join(Rails.root, "public", "backups", RailsMultisite::ConnectionManagement.current_db)
+    base_directory = File.join(Rails.root, "public", "backups", RailsMultisite::ConnectionManagement.current_db)
+    FileUtils.mkdir_p(base_directory) unless Dir.exists?(base_directory)
+    base_directory
   end
 
   def self.chunk_path(identifier, filename, chunk_number)
@@ -72,7 +73,7 @@ class Backup
   def self.create_from_filename(filename)
     Backup.new(filename).tap do |b|
       b.path = File.join(Backup.base_directory, b.filename)
-      b.link = b.schemaless "#{Discourse.base_url}/admin/backups/#{b.filename}"
+      b.link = UrlHelper.schemaless "#{Discourse.base_url}/admin/backups/#{b.filename}"
       b.size = File.size(b.path)
     end
   end
