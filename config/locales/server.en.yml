@@ -229,6 +229,12 @@ en:
     latest: "Latest topics"
     hot: "Hot topics"
     top: "Top topics"
+    top_all: "All time top topics"
+    top_yearly: "Yearly top topics"
+    top_quarterly: "Quarterly top topics"
+    top_monthly: "Monthly top topics"
+    top_weekly: "Weekly top topics"
+    top_daily: "Daily top topics"
     posts: "Latest posts"
     private_posts: "Latest private messages"
     group_posts: "Latest posts from %{group_name}"
@@ -385,6 +391,10 @@ en:
           attributes:
             payload_url:
               invalid: "URL is invalid. URL should includes http:// or https://. And no blank is allowed."
+        custom_emoji:
+          attributes:
+            name:
+              taken: is already in use by another emoji
 
   user_profile:
     no_info_me: "<div class='missing-profile'>the About Me field of your profile is currently blank, <a href='/users/%{username_lower}/preferences/about-me'>would you like to fill it out?</a></div>"
@@ -608,6 +618,7 @@ en:
     welcome_to: "Welcome to %{site_name}!"
     approval_required: "A moderator must manually approve your new account before you can access this forum. You'll get an email when your account is approved!"
     missing_session: "We cannot detect if your account was created, please ensure you have cookies enabled."
+    activated: "Sorry, this account has already been activated."
   post_action_types:
     off_topic:
       title: 'Off-Topic'
@@ -1566,11 +1577,6 @@ en:
   change_owner:
     post_revision_text: "Ownership transferred from %{old_user} to %{new_user}"
     deleted_user: "a deleted user"
-
-  emoji:
-    errors:
-      name_already_exists: "Sorry, the name '%{name}' is already used by another emoji."
-      error_while_storing_emoji: "Sorry, there has been an error while storing the emoji."
 
   topic_statuses:
     archived_enabled: "This topic is now archived. It is frozen and cannot be changed in any way."
