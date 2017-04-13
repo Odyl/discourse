@@ -135,6 +135,9 @@ he:
       visible:
         enabled: 'נכנס לרשימה %{when}'
         disabled: 'הוצא מהרשימה %{when}'
+      banner:
+        enabled: 'באנר זה נוצר ב-%{when}. הוא יופיע בראש כל דף עד שישוחרר על ידי המשתמש/ת.'
+        disabled: 'באנר זה הוסר ב-%{when}. הוא לא יופיע יותר בראש כל דף.'
     topic_admin_menu: "פעולות ניהול לנושא"
     wizard_required: "ברוכים הבאים לסידקורס החדש שלכם! בואו נתחיל עם <a href='%{url}' data-auto-route='true'>אשף ההתקנה</a> ✨"
     emails_are_disabled: "כל הדוא\"ל היוצא נוטרל באופן גורף על ידי מנהל אתר. שום הודעת דוא\"ל, מכל סוג שהוא, לא תשלח."
@@ -363,7 +366,7 @@ he:
       automatic_group: קבוצה אוטומטית
       closed_group: קבוצה סגורה
       is_group_user: "אתם חברים בקבוצה זו."
-      allow_membership_requests: "אפשרו למשתמשים לשלוח בקשות חברות לבעלי הקבוצה (מצריך שכולם יוכלו לאזכר את הקבוצה)"
+      allow_membership_requests: "אפשרו למשתמשים לשלוח בקשות חברות לבעלי קבוצה"
       membership: "חברות"
       name: "שם"
       user_count: "מספר חברים"
@@ -561,6 +564,7 @@ he:
       muted_users_instructions: "להשבית כל התראה ממשתמשים אלו"
       muted_topics_link: "הצג נושאים שהושתקו"
       watched_topics_link: "הצגת נושאים נצפים"
+      tracked_topics_link: "הצגת נושאים במעקב"
       automatically_unpin_topics: "בטל נעיצת נושאים באופן אוטומטי כאשר אני מגיע/ה לתחתית."
       apps: "אפליקציות"
       revoke_access: "שלילת גישה"
@@ -935,6 +939,10 @@ he:
       not_allowed_from_ip_address: "אינכם יכולים להתחבר מכתובת IP זו."
       admin_not_allowed_from_ip_address: "אינכם יכולים להתחבר כמנהל מערכת מכתובת IP זו."
       resend_activation_email: "יש ללחוץ כאן לשליחת דואר אלקטרוני חוזר להפעלת החשבון."
+      resend_title: "שליחה מחדש של מייל הפעלה"
+      change_email: "שינוי כתובת מייל"
+      provide_new_email: "הזינו כתובת חדשה ונשלח מחדש את מייל האישור שלכם."
+      submit_new_email: "עדכון כתובת מייל"
       sent_activation_email_again: "שלחנו לך הודעת דואר אלקטרוני נוספת להפעלת החשבון לכתובת <b>{{currentEmail}}</b>. זה יכול לקחת כמה דקות עד שיגיע, לא לשכוח לבדוק את תיבת דואר הזבל."
       to_continue: "התחברו בבקשה"
       preferences: "אתם צריכים להיות מחוברים כדי לשנות את העדפות המשתמש שלכם."
@@ -1151,6 +1159,7 @@ he:
       sort_by: "מיון על פי"
       relevance: "רלוונטיות"
       latest_post: "הפוסטים האחרונים"
+      latest_topic: "נושא אחרון"
       most_viewed: "הנצפה ביותר"
       most_liked: "האהובים ביותר"
       select_all: "בחירה של הכל"
@@ -1331,11 +1340,27 @@ he:
       jump_reply_up: קפיצה לתגובה קודמת
       jump_reply_down: קפיצה לתגובה מאוחרת
       deleted: "הנושא הזה נמחק"
-      auto_close_notice: "הנושא הזה יסגר אוטומטית %{timeLeft}."
-      auto_close_notice_based_on_last_post: "נושא זה ייסגר %{duration} אחר התגובה האחרונה."
+      topic_status_update:
+        title: "קביעת שעון עצר לנושא"
+        save: "קביעת שעון עצר"
+        time: "זמן:"
+        publish_to: "פרסום ל:"
+      auto_update_input:
+        limited:
+          units: "(# שעות)"
+          examples: 'הכניסו מספר שעות (24).'
+      publish_to_category:
+        title: "תזמון פרסום"
+      temp_open:
+        title: "פתיחה זמנית"
+      auto_reopen:
+        title: "פתיחה אוטומטית של נושא"
+      temp_close:
+        title: "סגירה זמנית"
+      auto_close:
+        title: "סגירה אוטומטית של נושא"
+        error: "אנא הכניסו ערך תקין."
       auto_close_title: 'הגדרות סגירה אוטומטית'
-      auto_close_save: "שמור"
-      auto_close_remove: "אל תנעל נושא זה אוטומטית"
       auto_close_immediate:
         one: "הפוסט האחרון בנושא הוא כבר בן שעה, אז הנושא ייסגר מיידית."
         other: "הפוסט האחרון בנושא הוא כבר בן %{count} שעות, אז הנושא ייסגר אוטומטית."
@@ -1802,8 +1827,10 @@ he:
       num_featured_topics: "מספר הנושאים המוצגים בדף הקטגוריות:"
       subcategory_num_featured_topics: "מספר הנושאים המומלצים בדף קטגוריית ההורה:"
       all_topics_wiki: "כברירת מחדל נושאים חדשים יהיו וויקי."
-      sort_order: "סידור ברירת מחדל:"
-      default_view: "תצוגת ברירת מחדל:"
+      subcategory_list_style: "סגנון רשימות קטגוריות משנה:"
+      sort_order: "סידור ברירת מחדל לנושאים:"
+      default_view: "תצוגת ברירת מחדל לנושאים:"
+      default_top_period: "פרק זמן דיפולטיבי להובלה"
       allow_badges_label: "הרשו לעיטורים להיות מוענקים בקטגוריה זו"
       edit_permissions: "ערוך הרשאות"
       add_permission: "הוסף הרשאה"
@@ -1841,6 +1868,11 @@ he:
         created: "נוצרו"
       sort_ascending: 'בסדר עולה'
       sort_descending: 'בסדר יורד'
+      subcategory_list_styles:
+        rows: "שורות"
+        rows_with_featured_topics: "שורות עם נושאים מומלצים"
+        boxes: "קופסאות"
+        boxes_with_featured_topics: "קופסאות אם נושאים מומלצים"
     flagging:
       title: 'תודה על עזרתך לשמירה על תרבות הקהילה שלנו!'
       action: 'דגלו פוסט'

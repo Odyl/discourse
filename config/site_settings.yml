@@ -184,6 +184,8 @@ basic:
   enable_mobile_theme:
     client: true
     default: true
+  default_theme_key:
+    hidden: true
   relative_date_duration:
     client: true
     default: 30
@@ -409,6 +411,7 @@ users:
     client: true
   anonymous_posting_min_trust_level:
     default: 1
+    enum: 'TrustLevelSetting'
     client: true
   anonymous_account_duration_minutes:
     default: 10080
@@ -716,7 +719,7 @@ files:
   max_image_megapixels:
     default: 40
     min: 5
-    max: 100
+    max: 150
   authorized_extensions:
     client: true
     default: 'jpg|jpeg|png|gif'
@@ -902,7 +905,6 @@ security:
     regex: '^(Lax|Strict|Disabled)$'
   enable_escaped_fragments: true
   allow_index_in_robots_txt: true
-  enable_noscript_support: true
   allow_moderators_to_create_categories: false
   cors_origins:
     default: ''
@@ -945,6 +947,9 @@ spam:
   max_age_unmatched_ips: 365
   num_flaggers_to_close_topic: 5
   num_flags_to_close_topic: 12
+  num_hours_to_close_topic:
+    default: 4
+    min: 1
   auto_respond_to_flag_actions: true
   min_first_post_typing_time: 3000
   auto_block_fast_typers_on_first_post: true
@@ -1310,7 +1315,6 @@ uncategorized:
 
   share_anonymized_statistics: true
 
-
 user_preferences:
   default_email_digest_frequency:
     enum: 'DigestEmailSiteSetting'
@@ -1382,6 +1386,7 @@ user_api:
     hidden: true
   min_trust_level_for_user_api_key:
     default: 1
+    enum: 'TrustLevelSetting'
   allowed_user_api_push_urls:
     default: ''
     type: list

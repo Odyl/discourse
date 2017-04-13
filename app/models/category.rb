@@ -1,5 +1,4 @@
 require_dependency 'distributed_cache'
-require_dependency 'sass/discourse_stylesheets'
 
 class Category < ActiveRecord::Base
 
@@ -203,7 +202,7 @@ SQL
     t = Topic.new(title: I18n.t("category.topic_prefix", category: name), user: user, pinned_at: Time.now, category_id: id)
     t.skip_callbacks = true
     t.ignore_category_auto_close = true
-    t.set_auto_close(nil)
+    t.set_or_create_status_update(TopicStatusUpdate.types[:close], nil)
     t.save!(validate: false)
     update_column(:topic_id, t.id)
     t.posts.create(raw: post_template, user: user)
@@ -463,7 +462,7 @@ SQL
     old_name = changed_attributes["name"]
     return unless topic.present?
     if topic.title == I18n.t("category.topic_prefix", category: old_name)
-      topic.update_column(:title, I18n.t("category.topic_prefix", category: name))
+      topic.update_attribute(:title, I18n.t("category.topic_prefix", category: name))
     end
   end
 
@@ -492,7 +491,7 @@ SQL
   end
 
   def publish_discourse_stylesheet
-    DiscourseStylesheets.cache.clear
+    Stylesheet::Manager.cache.clear
   end
 
   def index_search

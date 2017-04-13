@@ -19,7 +19,7 @@ class PostsController < ApplicationController
   def markdown_num
     if params[:revision].present?
       post_revision = find_post_revision_from_topic_id
-      render text: post_revision.modifications[:raw].last, content_type: 'text/plain'
+      render plain: post_revision.modifications[:raw].last
     else
       markdown Post.find_by(topic_id: params[:topic_id].to_i, post_number: (params[:post_number] || 1).to_i)
     end
@@ -27,7 +27,7 @@ class PostsController < ApplicationController
 
   def markdown(post)
     if post && guardian.can_see?(post)
-      render text: post.raw, content_type: 'text/plain'
+      render plain: post.raw
     else
       raise Discourse::NotFound
     end
@@ -103,7 +103,7 @@ class PostsController < ApplicationController
 
     @posts = posts
     @title = "#{SiteSetting.title} - #{I18n.t("rss_description.user_posts", username: user.username)}"
-    @link = "#{Discourse.base_url}/users/#{user.username}/activity"
+    @link = "#{Discourse.base_url}/u/#{user.username}/activity"
     @description = I18n.t("rss_description.user_posts", username: user.username)
     render 'posts/latest', formats: [:rss]
   end

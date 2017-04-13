@@ -50,10 +50,8 @@ task 'assets:precompile:css' => 'environment' do
       # css will get precompiled during first request instead in that case.
 
       if ActiveRecord::Base.connection.table_exists?(ColorScheme.table_name)
-        STDERR.puts "Compiling css for #{db}"
-        [:desktop, :mobile, :desktop_rtl, :mobile_rtl].each do |target|
-          STDERR.puts "target: #{target} #{DiscourseStylesheets.compile(target)}"
-        end
+        STDERR.puts "Compiling css for #{db} #{Time.zone.now}"
+        Stylesheet::Manager.precompile_css
       end
     end
 
@@ -108,7 +106,7 @@ def gzip(path)
 end
 
 def brotli(path)
-  if ENV['COMPRESS_BROTLI']
+  if ENV['COMPRESS_BROTLI']&.to_i == 1
     STDERR.puts "brotli #{path}"
     STDERR.puts `brotli --quality 11 --input #{path} --output #{path}.br`
     STDERR.puts `chmod +r #{path}.br`
@@ -134,8 +132,6 @@ def concurrent?
 end
 
 task 'assets:precompile' => 'assets:precompile:before' do
-  # Run after assets:precompile
-  Rake::Task["assets:precompile:css"].invoke
 
   if $bypass_sprockets_uglify
     puts "Compressing Javascript and Generating Source Maps"
@@ -185,6 +181,8 @@ task 'assets:precompile' => 'assets:precompile:before' do
       end
     end
 
+
+    Rake::Task["assets:precompile:css"].invoke
 
   end
 
