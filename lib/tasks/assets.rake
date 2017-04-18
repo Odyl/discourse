@@ -49,7 +49,7 @@ task 'assets:precompile:css' => 'environment' do
       # Heroku precompiles assets before db migration, so tables may not exist.
       # css will get precompiled during first request instead in that case.
 
-      if ActiveRecord::Base.connection.table_exists?(ColorScheme.table_name)
+      if ActiveRecord::Base.connection.table_exists?(Theme.table_name)
         STDERR.puts "Compiling css for #{db} #{Time.zone.now}"
         Stylesheet::Manager.precompile_css
       end
@@ -180,10 +180,21 @@ task 'assets:precompile' => 'assets:precompile:before' do
         STDERR.puts e.backtrace
       end
     end
-
-
-    Rake::Task["assets:precompile:css"].invoke
-
   end
 
+end
+
+Rake::Task["assets:precompile"].enhance do
+  class Sprockets::Manifest
+    def reload
+      @filename = find_directory_manifest(@directory)
+      @data = json_decode(File.read(@filename))
+    end
+  end
+
+  # cause on boot we loaded a blank manifest,
+  # we need to know where all the assets are to precompile CSS
+  # cause CSS uses asset_path
+  Rails.application.assets_manifest.reload
+  Rake::Task["assets:precompile:css"].invoke
 end

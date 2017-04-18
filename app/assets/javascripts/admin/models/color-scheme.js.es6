@@ -18,6 +18,15 @@ const ColorScheme = Discourse.Model.extend(Ember.Copyable, {
     });
   },
 
+  schemeJson(){
+    let buffer = [];
+    _.each(this.get('colors'), (c) => {
+      buffer.push(`  "${c.get('name')}": "${c.get('hex')}"`);
+    });
+
+    return [`"${this.get("name")}": {`, buffer.join(",\n"), "}"].join("\n");
+  },
+
   copy: function() {
     var newScheme = ColorScheme.create({name: this.get('name'), can_edit: true, colors: Em.A()});
     _.each(this.get('colors'), function(c){
@@ -34,6 +43,7 @@ const ColorScheme = Discourse.Model.extend(Ember.Copyable, {
   }.property('name', 'colors.@each.changed', 'saving'),
 
   disableSave: function() {
+    if (this.get('theme_id')) { return false; }
     return !this.get('changed') || this.get('saving') || _.any(this.get('colors'), function(c) { return !c.get('valid'); });
   }.property('changed'),
 
@@ -100,6 +110,8 @@ ColorScheme.reopenClass({
           id: colorScheme.id,
           name: colorScheme.name,
           is_base: colorScheme.is_base,
+          theme_id: colorScheme.theme_id,
+          theme_name: colorScheme.theme_name,
           base_scheme_id: colorScheme.base_scheme_id,
           colors: colorScheme.colors.map(function(c) { return ColorSchemeColor.create({name: c.name, hex: c.hex, default_hex: c.default_hex}); })
         }));

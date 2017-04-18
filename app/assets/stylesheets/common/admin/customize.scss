@@ -1,5 +1,11 @@
 // Customise area
 .customize {
+  h1 {
+    margin-bottom: 10px;
+    input {
+      margin-bottom: 0;
+    }
+  }
   .admin-container {
     padding-left: 10px;
     padding-right: 10px;
@@ -57,12 +63,18 @@
     }
 
     .nav.target {
+      li {
+        position: relative;
+      }
       margin-top: 15px;
       .fa {
         margin-left: 3px;
       }
       .fa-mobile {
-        font-size: 1.3em;
+        position: absolute;
+        right: -4px;
+        top: 2px;
+        font-size: 1.5em;
       }
     }
 
@@ -91,12 +103,6 @@
       .ace-wrapper {
         height: 100%;
       }
-    }
-
-    .custom-ace-gutter {
-      width: 41px;
-      background-color: #ebebeb;
-      height: 15px;
     }
 
     .ace_editor {

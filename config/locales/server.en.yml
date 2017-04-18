@@ -47,7 +47,7 @@ en:
   topics: "Topics"
   posts: "posts"
   loading: "Loading"
-  powered_by_html: 'Powered by <a href="http://www.discourse.org">Discourse</a>, best viewed with JavaScript enabled'
+  powered_by_html: 'Powered by <a href="https://www.discourse.org">Discourse</a>, best viewed with JavaScript enabled'
   log_in: "Log In"
 
   purge_reason: "Automatically deleted as abandoned, deactivated account"
@@ -55,6 +55,9 @@ en:
   anonymous: "Anonymous"
   remove_posts_deleted_by_author: "Deleted by author"
 
+  themes:
+    bad_color_scheme: "Can not update theme, invalid color scheme"
+    other_error: "Something went wrong updating theme"
   emails:
     incoming:
       default_subject: "This topic needs a title"
@@ -1952,7 +1955,7 @@ en:
 
     usage_tips:
       text_body_template: |
-        For a few quick tips on getting started as a new user, [check out this blog post](http://blog.discourse.org/2016/12/discourse-new-user-tips-and-tricks/).
+        For a few quick tips on getting started as a new user, [check out this blog post](https://blog.discourse.org/2016/12/discourse-new-user-tips-and-tricks/).
 
         As you participate here, we’ll get to know you, and temporary new user limitations will be lifted. Over time you’ll gain [trust levels](https://meta.discourse.org/t/what-do-user-trust-levels-do/4924) that include special abilities to help us manage our community together.
 
@@ -3361,7 +3364,7 @@ en:
   safe_mode:
     title: "Enter safe mode"
     description: "Safe mode allows you to test your site without loading plugins or site customizations."
-    no_customizations: "Disable all site customizations"
+    no_customizations: "Disable current theme"
     only_official: "Disable unofficial plugins"
     no_plugins: "Disable all plugins"
     enter: "Enter Safe Mode"

@@ -7,15 +7,18 @@ export function currentThemeKey() {
   let elem = _.first($(keySelector));
   if (elem) {
     themeKey = elem.content;
+    if (_.isEmpty(themeKey)) {
+      themeKey = null;
+    }
   }
   return themeKey;
 }
 
 export function selectDefaultTheme(key) {
   if (key) {
-    $.cookie('preview_style', key, {path: '/', expires: 9999});
+    $.cookie('theme_key', key, {path: '/', expires: 9999});
   } else {
-    $.cookie('preview_style', null, {path: '/', expires: 1});
+    $.cookie('theme_key', null, {path: '/', expires: 1});
   }
 }
 

@@ -1,7 +1,15 @@
 import { default as computed } from 'ember-addons/ember-computed-decorators';
 import { url } from 'discourse/lib/computed';
+import { popupAjaxError } from 'discourse/lib/ajax-error';
 
 export default Ember.Controller.extend({
+
+  @computed("model", "allThemes")
+  parentThemes(model, allThemes) {
+    let parents = allThemes.filter(theme =>
+        _.contains(theme.get("childThemes"), model));
+    return parents.length === 0 ? null : parents;
+  },
 
   @computed("model.theme_fields.@each")
   hasEditedFields(fields) {
@@ -25,6 +33,8 @@ export default Ember.Controller.extend({
     return descriptions.reject(d=>Em.isBlank(d));
   },
 
+  previewUrl: url('model.id', '/admin/themes/%@/preview'),
+
   @computed("colorSchemeId", "model.color_scheme_id")
   colorSchemeChanged(colorSchemeId, existingId) {
     colorSchemeId = colorSchemeId === null ? null : parseInt(colorSchemeId);
@@ -45,8 +55,6 @@ export default Ember.Controller.extend({
     });
     return themes.length === 0 ? null : themes;
   },
-
-  showSchemes: Em.computed.or("model.default", "model.user_selectable"),
 
   @computed("allThemes", "allThemes.length", "model")
   availableChildThemes(allThemes, count) {
@@ -72,16 +80,20 @@ export default Ember.Controller.extend({
 
     updateToLatest() {
       this.set("updatingRemote", true);
-      this.get("model").updateToLatest().finally(()=>{
-        this.set("updatingRemote", false);
-      });
+      this.get("model").updateToLatest()
+        .catch(popupAjaxError)
+        .finally(()=>{
+          this.set("updatingRemote", false);
+        });
     },
 
     checkForThemeUpdates() {
       this.set("updatingRemote", true);
-      this.get("model").checkForUpdates().finally(()=>{
-        this.set("updatingRemote", false);
-      });
+      this.get("model").checkForUpdates()
+        .catch(popupAjaxError)
+        .finally(()=>{
+          this.set("updatingRemote", false);
+        });
     },
 
     cancelChangeScheme() {
@@ -106,7 +118,7 @@ export default Ember.Controller.extend({
     },
 
     editTheme() {
-      let edit = ()=>this.transitionToRoute('adminCustomizeThemes.edit', {model: this.get('model')});
+      let edit = ()=>this.transitionToRoute('adminCustomizeThemes.edit', this.get('model.id'), 'common', 'scss');
 
       if (this.get("model.remote_theme")) {
       bootbox.confirm(I18n.t("admin.customize.theme.edit_confirm"), result => {

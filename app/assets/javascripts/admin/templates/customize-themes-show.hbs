@@ -21,12 +21,19 @@
   {{/if}}
 
 
+  {{#if parentThemes}}
+  <h3>{{i18n "admin.customize.theme.component_of"}}</h3>
+  <ul>
+    {{#each parentThemes as |theme|}}
+    <li>{{#link-to 'adminCustomizeThemes.show' theme replace=true}}{{theme.name}}{{/link-to}}</li>
+    {{/each}}
+  </ul>
+  {{else}}
   <p>
     {{inline-edit-checkbox action="applyDefault" labelKey="admin.customize.theme.is_default" checked=model.default}}
     {{inline-edit-checkbox action="applyUserSelectable" labelKey="admin.customize.theme.user_selectable" checked=model.user_selectable}}
   </p>
 
-  {{#if showSchemes}}
   <h3>{{i18n "admin.customize.theme.color_scheme"}}</h3>
   <p>{{i18n "admin.customize.theme.color_scheme_select"}}</p>
   <p>{{combo-box content=colorSchemes
@@ -58,7 +65,7 @@
   <p>
     {{#if model.remote_theme}}
       {{#if model.remote_theme.commits_behind}}
-      {{#d-button action="updateToLatest" icon="download"}}{{i18n "admin.customize.theme.update_to_latest"}}{{/d-button}}
+      {{#d-button action="updateToLatest" icon="download" class='btn-primary'}}{{i18n "admin.customize.theme.update_to_latest"}}{{/d-button}}
       {{else}}
       {{#d-button action="checkForThemeUpdates" icon="refresh"}}{{i18n "admin.customize.theme.check_for_updates"}}{{/d-button}}
       {{/if}}
@@ -80,7 +87,7 @@
   </p>
 
   {{#if availableChildThemes}}
-    <h3>{{i18n "admin.customize.theme.included_themes"}}</h3>
+    <h3>{{i18n "admin.customize.theme.theme_components"}}</h3>
     {{#unless model.childThemes.length}}
     <p>
       <label class='checkbox-label'>
@@ -91,7 +98,7 @@
     {{else}}
     <ul>
       {{#each model.childThemes as |child|}}
-        <li>{{child.name}} {{d-button action="removeChildTheme" actionParam=child class="btn-small cancel-edit" icon="times"}}</li>
+      <li>{{#link-to 'adminCustomizeThemes.show' child replace=true}}{{child.name}}{{/link-to}} {{d-button action="removeChildTheme" actionParam=child class="btn-small cancel-edit" icon="times"}}</li>
       {{/each}}
     </ul>
     {{/unless}}
@@ -106,6 +113,7 @@
     {{/if}}
   {{/if}}
 
+  <a href='{{previewUrl}}' title="{{i18n 'admin.customize.explain_preview'}}" target='_blank' class='btn'>{{fa-icon 'desktop'}}{{i18n 'admin.customize.theme.preview'}}</a>
   <a class="btn export" target="_blank" href={{downloadUrl}}>{{fa-icon "download"}} {{i18n 'admin.export_json.button_text'}}</a>
 
   {{d-button action="destroy" label="admin.customize.delete" icon="trash" class="btn-danger"}}

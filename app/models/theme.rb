@@ -12,6 +12,7 @@ class Theme < ActiveRecord::Base
   has_many :theme_fields, dependent: :destroy
   has_many :child_theme_relation, class_name: 'ChildTheme', foreign_key: 'parent_theme_id', dependent: :destroy
   has_many :child_themes, through: :child_theme_relation, source: :child_theme
+  has_many :color_schemes
   belongs_to :remote_theme
 
   before_create do
@@ -19,7 +20,13 @@ class Theme < ActiveRecord::Base
     true
   end
 
+  def notify_color_change(color)
+    changed_colors << color
+  end
+
   after_save do
+    changed_colors.each(&:save!)
+    changed_colors.clear
     changed_fields.each(&:save!)
     changed_fields.clear
 
@@ -44,6 +51,24 @@ class Theme < ActiveRecord::Base
   after_commit ->(theme) do
     theme.notify_theme_change
   end, on: :update
+
+  def self.theme_keys
+    if keys = @cache["theme_keys"]
+      return keys
+    end
+    @cache["theme_keys"] = Set.new(Theme.pluck(:key))
+  end
+
+  def self.user_theme_keys
+    if keys = @cache["user_theme_keys"]
+      return keys
+    end
+    @cache["theme_keys"] = Set.new(
+      Theme
+      .where('user_selectable OR key = ?', SiteSetting.default_theme_key)
+      .pluck(:key)
+    )
+  end
 
   def self.expire_site_cache!
     Site.clear_anon_cache!
@@ -91,7 +116,7 @@ class Theme < ActiveRecord::Base
 
   def notify_scheme_change(clear_manager_cache=true)
     Stylesheet::Manager.cache.clear if clear_manager_cache
-    message = refresh_message_for_targets(["desktop", "mobile", "admin"], self.color_scheme_id, self, Rails.env.development?)
+    message = refresh_message_for_targets(["desktop", "mobile", "admin"], self)
     MessageBus.publish('/file-change', message)
   end
 
@@ -101,23 +126,19 @@ class Theme < ActiveRecord::Base
     themes = [self] + dependant_themes
 
     message = themes.map do |theme|
-      refresh_message_for_targets([:mobile_theme,:desktop_theme], theme.id, theme)
+      refresh_message_for_targets([:mobile_theme,:desktop_theme], theme)
     end.compact.flatten
     MessageBus.publish('/file-change', message)
   end
 
-  def refresh_message_for_targets(targets, id, theme, add_cache_breaker=false)
+  def refresh_message_for_targets(targets, theme)
     targets.map do |target|
-      link = Stylesheet::Manager.stylesheet_link_tag(target.to_sym, 'all', theme.key)
-      if link
-        href = link.split(/["']/)[1]
-        if add_cache_breaker
-          href << (href.include?("?") ? "&" : "?")
-          href << SecureRandom.hex
-        end
+      href = Stylesheet::Manager.stylesheet_href(target.to_sym, theme.key)
+      if href
         {
-          name: "/stylesheets/#{target}#{id ? "_#{id}": ""}",
-          new_href: href
+          target: target,
+          new_href: href,
+          theme_key: theme.key
         }
       end
     end
@@ -204,6 +225,10 @@ class Theme < ActiveRecord::Base
     @changed_fields ||= []
   end
 
+  def changed_colors
+    @changed_colors ||= []
+  end
+
   def set_field(target, name, value)
     name = name.to_s
 
@@ -213,7 +238,7 @@ class Theme < ActiveRecord::Base
     field = theme_fields.find{|f| f.name==name && f.target == target_id}
     if field
       if value.blank?
-        field.destroy
+        theme_fields.delete field.destroy
       else
         if field.value != value
           field.value = value

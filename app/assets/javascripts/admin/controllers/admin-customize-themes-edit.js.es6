@@ -35,7 +35,12 @@ export default Ember.Controller.extend({
 
   @computed("fieldName")
   activeSectionMode(fieldName) {
-    return fieldName && fieldName.indexOf("scss") > -1 ? "css" : "html";
+    return fieldName && fieldName.indexOf("scss") > -1 ? "scss" : "html";
+  },
+
+  @computed("fieldName", "currentTargetName")
+  editorId(fieldName, currentTarget) {
+    return fieldName + "|" + currentTarget;
   },
 
   @computed("fieldName", "currentTargetName", "model")
@@ -76,7 +81,7 @@ export default Ember.Controller.extend({
     });
   },
 
-  previewUrl: url('model.key', '/?preview-style=%@'),
+  previewUrl: url('model.id', '/admin/themes/%@/preview'),
 
   maximizeIcon: function() {
     return this.get('maximized') ? 'compress' : 'expand';
@@ -89,9 +94,6 @@ export default Ember.Controller.extend({
   saveDisabled: function() {
     return !this.get('model.changed') || this.get('model.isSaving');
   }.property('model.changed', 'model.isSaving'),
-
-  undoPreviewUrl: url('/?preview-style='),
-  defaultStyleUrl: url('/?preview-style=default'),
 
   actions: {
     save() {
