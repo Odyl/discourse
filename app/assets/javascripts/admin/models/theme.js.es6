@@ -20,6 +20,22 @@ const Theme = RestModel.extend({
     return hash;
   },
 
+  hasEdited(target, name){
+    if (name) {
+      return !Em.isEmpty(this.getField(target, name));
+    } else {
+      let fields = this.get("theme_fields") || [];
+      return fields.any(field => (field.target === target && !Em.isEmpty(field.value)));
+    }
+  },
+
+  getError(target, name) {
+    let themeFields = this.get("themeFields");
+    let key = target + " " + name;
+    let field = themeFields[key];
+    return field ? field.error : "";
+  },
+
   getField(target, name) {
     let themeFields = this.get("themeFields");
     let key = target + " " + name;
@@ -57,6 +73,10 @@ const Theme = RestModel.extend({
 
   addChildTheme(theme){
     let childThemes = this.get("childThemes");
+    if (!childThemes) {
+      childThemes = [];
+      this.set('childThemes', childThemes);
+    }
     childThemes.removeObject(theme);
     childThemes.pushObject(theme);
     return this.saveChanges("child_theme_ids");
